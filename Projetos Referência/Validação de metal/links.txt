@@ -1,0 +1,5 @@
+YOUTUBE
+https://www.youtube.com/watch?v=2L9vadljFcM 
+
+GITHUB
+https://github.com/passion-tech/Hello-tech/blob/master/ESP32_12VRelay_Inductive_Proximit y_Sensor.ino
