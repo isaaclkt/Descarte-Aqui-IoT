@@ -1,0 +1,9 @@
+ Vídeo: 
+https://www.youtube.com/watch?v=mLzEb_1i9UQ
+
+ Código ESP32: https://raw.githubusercontent.com/itsbhupendrasingh/Smart-Dustbin-with-New-Blynk2.0_new-method/Master/Smart_dustbin_ESP32/Smart_dustbin_ESP32.ino
+
+ Diagrama: https://raw.githubusercontent.com/itsbhupendrasingh/Smart-Dustbin-with-New-Blynk2.0_new-method/Master/smart_dustbin_ESP32.png
+
+ GitHub: https://github.com/itsbhupendrasingh/Smart-Dustbin-with-New-Blynk2.0_new-method
+
