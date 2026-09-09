@@ -1,0 +1,5 @@
+Vídeo: 
+https://www.youtube.com/watch?v=rUbIGoCNwj8
+
+Exemplos + Código: https://electronoobs.com/tutorial/esp32-lan-iot-control-examples
+
