@@ -3,3 +3,12 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Regulamento do TDE (nao versionar)
+TDE01-regulamento-tde.pdf
+
+# Python do gerador da pagina
+__pycache__/
+
+# Credenciais de Wi-Fi - nunca versionar
+src/config_wifi.h

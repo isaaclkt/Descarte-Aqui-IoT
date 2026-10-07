@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Descarte Aqui - Painel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="cabecalho">
+    <h1>Descarte Aqui</h1>
+    <p class="subtitulo">Sistema inteligente para descarte de resíduos &middot; ESP32 como servidor HTTP</p>
+    <div class="linha-conexao">
+      <span id="badge-conexao" class="badge badge-off">Desconectado</span>
+      <span class="ip">IP do ESP32: <strong id="ip-esp32">--</strong></span>
+      <span class="ip">Rede: <strong id="rede-esp32">--</strong></span>
+    </div>
+  </header>
+
+  <main>
+
+    <section class="painel">
+      <h2>Estado do sistema</h2>
+      <p id="estado-sistema" class="estado-grande">--</p>
+    </section>
+
+    <section class="grade">
+
+      <article class="cartao">
+        <h3>Objeto presente</h3>
+        <p class="valor" id="objeto-presente">--</p>
+        <p class="detalhe">Distância: <span id="distancia">--</span> cm</p>
+      </article>
+
+      <article class="cartao">
+        <h3>Material</h3>
+        <p class="valor" id="metal">--</p>
+        <p class="detalhe">Sensor indutivo (GPIO 32)</p>
+      </article>
+
+      <article class="cartao">
+        <h3>Peso</h3>
+        <p class="valor"><span id="peso">--</span> g</p>
+        <p class="detalhe">Leitura bruta: <span id="peso-bruto">--</span></p>
+      </article>
+
+      <article class="cartao">
+        <h3>Porta (atuador)</h3>
+        <p class="valor" id="estado-porta">--</p>
+        <p class="detalhe">Servo no GPIO 26</p>
+      </article>
+
+      <article class="cartao">
+        <h3>Servo de separação</h3>
+        <p class="valor"><span id="servo-separacao">--</span>&deg;</p>
+        <p class="detalhe">Servo no GPIO 25</p>
+      </article>
+
+      <article class="cartao">
+        <h3>Tempo ligado</h3>
+        <p class="valor" id="uptime">--</p>
+        <p class="detalhe">Memória livre: <span id="heap">--</span> bytes</p>
+      </article>
+
+    </section>
+
+    <section class="painel">
+      <h2>Comandos</h2>
+      <p class="aviso">Os comandos abaixo acionam o servo da portinha diretamente pela rede.</p>
+      <div class="botoes">
+        <button id="btn-abrir" class="botao botao-on">Abrir porta</button>
+        <button id="btn-fechar" class="botao botao-off">Fechar porta</button>
+      </div>
+      <p id="retorno-comando" class="retorno"></p>
+    </section>
+
+  </main>
+
+  <footer class="rodape">
+    <span>Última atualização: <strong id="ultima-atualizacao">--</strong></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

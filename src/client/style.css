@@ -1,0 +1,197 @@
+/* Descarte Aqui - estilos do painel web servido pelo ESP32 */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 16px 32px;
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  background: #11161d;
+  color: #e8edf3;
+  line-height: 1.5;
+}
+
+/* ---------- Cabeçalho ---------- */
+
+.cabecalho {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 0 20px;
+  border-bottom: 1px solid #263141;
+}
+
+.cabecalho h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  color: #46d39a;
+}
+
+.subtitulo {
+  margin: 4px 0 16px;
+  color: #93a1b3;
+  font-size: 0.92rem;
+}
+
+.linha-conexao {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.badge-on {
+  background: #10492f;
+  color: #46d39a;
+}
+
+.badge-off {
+  background: #4a1c1c;
+  color: #f07a7a;
+}
+
+.ip {
+  font-size: 0.88rem;
+  color: #93a1b3;
+}
+
+.ip strong {
+  color: #e8edf3;
+}
+
+/* ---------- Blocos ---------- */
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.painel {
+  margin: 24px 0;
+  padding: 18px 20px;
+  background: #182028;
+  border: 1px solid #263141;
+  border-radius: 10px;
+}
+
+.painel h2 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+  color: #93a1b3;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.estado-grande {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #46d39a;
+}
+
+/* ---------- Grade de cartões ---------- */
+
+.grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin: 24px 0;
+}
+
+.cartao {
+  padding: 16px 18px;
+  background: #182028;
+  border: 1px solid #263141;
+  border-radius: 10px;
+}
+
+.cartao h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  color: #93a1b3;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.valor {
+  margin: 0 0 4px;
+  font-size: 1.45rem;
+  font-weight: 600;
+  color: #e8edf3;
+}
+
+.detalhe {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #6f7f93;
+}
+
+/* ---------- Comandos ---------- */
+
+.aviso {
+  margin: 0 0 14px;
+  font-size: 0.85rem;
+  color: #93a1b3;
+}
+
+.botoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.botao {
+  padding: 11px 24px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #11161d;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.botao:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.botao-on {
+  background: #46d39a;
+}
+
+.botao-off {
+  background: #f0a67a;
+}
+
+.retorno {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  min-height: 1.2em;
+  color: #93a1b3;
+}
+
+.retorno.erro {
+  color: #f07a7a;
+}
+
+/* ---------- Rodapé ---------- */
+
+.rodape {
+  max-width: 960px;
+  margin: 0 auto;
+  padding-top: 16px;
+  border-top: 1px solid #263141;
+  font-size: 0.82rem;
+  color: #6f7f93;
+}

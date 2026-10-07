@@ -1,342 +1,600 @@
+/* =====================================================================
+   DESCARTE AQUI - Sistema inteligente para descarte de residuos
+   TDE - Conectividade em Sistemas Ciberfisicos (PUCPR)
+
+   O ESP32 funciona como SERVIDOR HTTP na rede Wi-Fi local.
+   O navegador acessa http://<ip-do-esp32>/ e consulta os sensores
+   e comanda o atuador sem depender de nenhum servico externo.
+
+   Fluxo:   NAVEGADOR  <--HTTP-->  ESP32  <-->  SENSORES / ATUADORES
+   ===================================================================== */
+
 #include <Arduino.h>
+#include <WiFi.h>
+#include <WebServer.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "HX711.h"
 #include <ESP32Servo.h>
 
-// Tela oled
+#include "pagina_web.h"   // HTML/CSS/JS embutidos (gerado por tools/gerar_pagina_web.py)
+
+/* =====================================================================
+   1) CONFIGURACAO DO WI-FI
+
+   O SSID e a senha ficam em src/config_wifi.h, que NAO vai para o GitHub
+   (esta no .gitignore). Antes da primeira compilacao, cada integrante copia
+   o modelo e preenche com os dados da rede:
+
+       copy src\config_wifi.exemplo.h src\config_wifi.h
+   ===================================================================== */
+
+#if __has_include("config_wifi.h")
+  #include "config_wifi.h"
+#else
+  #error "Falta src/config_wifi.h - copie src/config_wifi.exemplo.h para src/config_wifi.h e preencha o SSID e a senha."
+#endif
+
+// Tempo maximo esperando o Wi-Fi conectar antes de seguir mesmo assim.
+#define TIMEOUT_WIFI_MS 20000
+
+// Modo Access Point (plano B).
+// Se a rede configurada nao estiver ao alcance - o que acontece sempre que
+// levamos o prototipo para fora de casa - o ESP32 cria a PROPRIA rede Wi-Fi.
+// Basta conectar o notebook ou o celular nela e abrir http://192.168.4.1
+// O regulamento permite isso (FAQ 14): nao e preciso internet, so conectividade
+// IP entre o cliente e o ESP32.
+#ifndef AP_SSID
+  #define AP_SSID "DescarteAqui"
+#endif
+#ifndef AP_SENHA
+  #define AP_SENHA "descarte123"   // minimo 8 caracteres, exigencia do ESP32
+#endif
+
+// De quanto em quanto tempo verificamos se o Wi-Fi caiu.
+#define INTERVALO_RECONEXAO_MS 10000
+
+/* =====================================================================
+   2) PINAGEM DO HARDWARE
+   ===================================================================== */
+
+// Display OLED SSD1306 (I2C)
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-
 #define OLED_SDA 21
 #define OLED_SCL 22
+#define OLED_ENDERECO 0x3C
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-// HX711
+// Balanca HX711 + celula de carga
 #define HX711_DT 16
 #define HX711_SCK 4
 
 HX711 balanca;
 
-// HC-SR04
+// Fator de calibracao da balanca.
+// Para calibrar: coloque um peso conhecido, veja "peso_bruto" em /sensor e
+// divida esse valor pelo peso real em gramas. Ajuste a constante abaixo.
+#define FATOR_CALIBRACAO 420.0
+
+// Sensor ultrassonico HC-SR04
 #define TRIG_PIN 19
 #define ECHO_PIN 18
-#define DISTANCIA_DETECCAO 5
+#define DISTANCIA_DETECCAO 5     // cm - abaixo disso consideramos que ha objeto
 
-
-// Sensor indutivo
+// Sensor indutivo de metal (LOW = metal detectado)
 #define SENSOR_METAL 32
 
-// Servo responsável pela separação
-
+// Servo que desvia o objeto para o lado certo
 #define SERVO_SEPARACAO_PIN 25
-
-Servo servoSeparacao;
-
-// Servo responsável pela portinha do não-metal
-
-#define SERVO_PORTA_PIN 26
-
-Servo servoPorta;
-
-// Posições do servo de separação
-
 #define SERVO_NAO_METAL 20
 #define SERVO_METAL 160
 #define SERVO_INICIAL 90
 
-// Posições servo da portinha
+Servo servoSeparacao;
 
+// Servo da portinha de retirada do nao-metal
+// (este e o atuador comandado pela rota /atuador)
+#define SERVO_PORTA_PIN 26
 #define PORTA_FECHADA 0
 #define PORTA_ABERTA 90
 
-// Tempos:
+Servo servoPorta;
 
+// Tempos do ciclo de separacao
 #define TEMPO_ESPERA 4000
-
 #define TEMPO_PORTA_ABERTA 5000
-
 #define TEMPO_ESTABILIZACAO 3000
 
+/* =====================================================================
+   3) ESTADO GLOBAL - e isto que as rotas HTTP publicam
+   ===================================================================== */
 
-// Distância medida pelo sensor ultrassônico
+WebServer server(80);            // servidor HTTP escutando na porta 80
 
+const char *FIRMWARE = "0.1.0";
+
+// Leituras dos sensores
+float distanciaCm = -1;
+bool  objetoPresente = false;
+bool  metalDetectado = false;
+long  pesoBruto = 0;
+float pesoGramas = 0;
+
+// Saude dos perifericos
+bool oledOk = false;
+bool balancaOk = false;
+
+// Estado dos atuadores
+int  posicaoServoSeparacao = SERVO_INICIAL;
+bool portaAberta = false;
+
+// Estado do sistema mostrado na interface
+const char *estadoSistema = "Iniciando";
+
+// true  = o ESP32 criou a propria rede (Access Point)
+// false = o ESP32 entrou numa rede existente (station)
+bool modoAP = false;
+
+unsigned long ultimaLeituraMs = 0;
+unsigned long ultimaVerificacaoWiFi = 0;
+
+/* =====================================================================
+   4) AUXILIARES
+   ===================================================================== */
+
+// Espera sem travar o servidor.
+// Trocamos todos os delay() do ciclo de separacao por esta funcao: assim o
+// ESP32 continua respondendo ao navegador mesmo durante os 4-5 segundos em
+// que os servos estao trabalhando.
+void aguardar(unsigned long ms) {
+  unsigned long inicio = millis();
+  while (millis() - inicio < ms) {
+    server.handleClient();
+    delay(1);
+  }
+}
+
+// Endereco em que o servidor responde, seja qual for o modo de rede.
+String enderecoIP() {
+  return modoAP ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+}
+
+// Escreve ate 4 linhas no OLED. Se o display nao existir, nao faz nada.
+void mostrarOled(const char *l1, const char *l2, const char *l3, const char *l4) {
+  if (!oledOk) return;
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  if (l1) { display.setCursor(0, 0);  display.println(l1); }
+  if (l2) { display.setCursor(0, 20); display.println(l2); }
+  if (l3) { display.setCursor(0, 35); display.println(l3); }
+  if (l4) { display.setCursor(0, 50); display.println(l4); }
+
+  display.display();
+}
+
+// Dispara o pulso do HC-SR04 e converte o eco em centimetros.
 float medirDistancia() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
 
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
 
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
 
-    digitalWrite(TRIG_PIN, LOW);
+  long duracao = pulseIn(ECHO_PIN, HIGH, 30000);
 
-    long duracao = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duracao == 0) {
+    return -1;                       // nenhum eco voltou dentro de 30 ms
+  }
 
-    if (duracao == 0) {
-        return -1;
-    }
-
-    float distancia = duracao * 0.0343 / 2;
-
-    return distancia;
+  return duracao * 0.0343 / 2;       // velocidade do som, ida e volta
 }
 
-
-// Ler peso do objeto na balança e exibir no display
-
-void lerPeso() {
-    display.clearDisplay();
-
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-
-    display.setCursor(0, 0);
-    display.println("DESCARTE AQUI");
-
-    display.setCursor(0, 20);
-    display.println("METAL DETECTADO!");
-
-    display.setCursor(0, 35);
-    display.println("Aguardando peso...");
-
-    display.display();
-
-    delay(TEMPO_ESTABILIZACAO);
-
-    if (balanca.is_ready()) {
-
-        long leitura = balanca.read();
-
-        display.clearDisplay();
-
-        display.setTextSize(1);
-        display.setTextColor(SSD1306_WHITE);
-
-        display.setCursor(0, 0);
-        display.println("DESCARTE AQUI");
-
-        display.setCursor(0, 20);
-        display.println("PILHA");
-
-        display.setCursor(0, 35);
-        display.println("Peso:");
-
-        display.setCursor(0, 50);
-        display.println(leitura);
-
-        display.display();
-
-    } else {
-
-        display.clearDisplay();
-
-        display.setTextSize(1);
-        display.setTextColor(SSD1306_WHITE);
-
-        display.setCursor(0, 0);
-        display.println("DESCARTE AQUI");
-
-        display.setCursor(0, 25);
-        display.println("Erro na balanca!");
-
-        display.display();
-    }
+// Move o servo da portinha e atualiza o estado publicado pelas rotas.
+void definirPorta(bool abrir) {
+  portaAberta = abrir;
+  servoPorta.write(abrir ? PORTA_ABERTA : PORTA_FECHADA);
+  Serial.printf("[ATUADOR] Porta -> %s\n", abrir ? "ABERTA" : "FECHADA");
 }
 
-
-// Porta servo não metal
-
-void abrirPorta() {
-
-    display.clearDisplay();
-
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-
-    display.setCursor(0, 0);
-    display.println("NAO PILHA DETECTADO!");
-
-    display.setCursor(0, 20);
-    display.println("RETIRE O OBJETO!");
-
-    display.setCursor(0, 35);
-    display.println("Porta aberta!");
-
-    display.display();
-
-
-    servoPorta.write(PORTA_ABERTA);
-    delay(TEMPO_PORTA_ABERTA);
-
-    servoPorta.write(PORTA_FECHADA);
-
-    delay(1000);
+// Move o servo de separacao e guarda a posicao.
+void definirSeparacao(int posicao) {
+  posicaoServoSeparacao = posicao;
+  servoSeparacao.write(posicao);
 }
 
+// Converte a leitura bruta do HX711 em gramas, usando a tara (offset) e o
+// fator de calibracao (scale) que definimos no setup.
+float converterParaGramas(long bruto) {
+  return (bruto - balanca.get_offset()) / balanca.get_scale();
+}
+
+// Le a balanca SEM travar o loop.
+// is_ready() apenas pergunta se ja existe amostra disponivel; se nao existir,
+// saimos na hora. Nao usamos get_units() aqui porque ele chama wait_ready()
+// internamente e ficaria bloqueado ate a proxima amostra (~100 ms), o que
+// seguraria o loop e o atendimento das requisicoes HTTP.
+void atualizarPeso() {
+  if (!balancaOk || !balanca.is_ready()) return;
+
+  pesoBruto = balanca.read();
+  pesoGramas = converterParaGramas(pesoBruto);
+}
+
+/* =====================================================================
+   5) MONTAGEM DAS RESPOSTAS JSON
+   ===================================================================== */
+
+// Observacao: montamos o JSON sempre com +=, nunca com "texto" + String(...).
+// Em C++ nao existe operator+ para (const char* + String), entao aquela forma
+// nem compilaria. Usar += tambem evita criar Strings temporarias na memoria.
+
+String jsonStatus() {
+  String j = "{";
+  j += "\"dispositivo\":\"Descarte Aqui - ESP32\",";
+
+  j += "\"firmware\":\"";
+  j += FIRMWARE;
+
+  j += "\",\"estado\":\"";
+  j += estadoSistema;
+
+  j += "\",\"wifi_conectado\":";
+  j += (modoAP || WiFi.status() == WL_CONNECTED) ? "true" : "false";
+
+  j += ",\"modo_rede\":\"";
+  j += modoAP ? "AP" : "STA";
+
+  j += "\",\"ssid\":\"";
+  j += modoAP ? AP_SSID : WIFI_SSID;
+
+  j += "\",\"ip\":\"";
+  j += enderecoIP();
+
+  j += "\",\"rssi\":";
+  j += WiFi.RSSI();
+
+  j += ",\"uptime_s\":";
+  j += millis() / 1000;
+
+  j += ",\"heap_livre\":";
+  j += ESP.getFreeHeap();
+
+  j += ",\"oled_ok\":";
+  j += oledOk ? "true" : "false";
+
+  j += ",\"balanca_ok\":";
+  j += balancaOk ? "true" : "false";
+
+  j += ",\"porta\":\"";
+  j += portaAberta ? "aberta" : "fechada";
+
+  j += "\",\"servo_separacao\":";
+  j += posicaoServoSeparacao;
+
+  j += "}";
+  return j;
+}
+
+String jsonSensor() {
+  String j = "{";
+
+  j += "\"distancia_cm\":";
+  j += String(distanciaCm, 1);
+
+  j += ",\"objeto_presente\":";
+  j += objetoPresente ? "true" : "false";
+
+  j += ",\"metal_detectado\":";
+  j += metalDetectado ? "true" : "false";
+
+  j += ",\"peso_bruto\":";
+  j += pesoBruto;
+
+  j += ",\"peso_g\":";
+  j += String(pesoGramas, 1);
+
+  j += ",\"balanca_ok\":";
+  j += balancaOk ? "true" : "false";
+
+  j += ",\"atualizado_ms\":";
+  j += ultimaLeituraMs;
+
+  j += "}";
+  return j;
+}
+
+/* =====================================================================
+   6) ROTAS HTTP
+   ===================================================================== */
+
+void registrarRequisicao() {
+  Serial.printf("[HTTP] %s %s  (cliente %s)\n",
+                server.method() == HTTP_GET ? "GET" : "OUTRO",
+                server.uri().c_str(),
+                server.client().remoteIP().toString().c_str());
+}
+
+void enviarJson(int codigo, const String &corpo) {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(codigo, "application/json", corpo);
+}
+
+// GET /  -> pagina principal
+void rotaRaiz() {
+  registrarRequisicao();
+  server.send_P(200, "text/html", PAGINA_HTML);
+}
+
+// GET /style.css
+void rotaCss() {
+  registrarRequisicao();
+  server.send_P(200, "text/css", PAGINA_CSS);
+}
+
+// GET /app.js
+void rotaJs() {
+  registrarRequisicao();
+  server.send_P(200, "application/javascript", PAGINA_JS);
+}
+
+// GET /status -> estado geral do sistema
+void rotaStatus() {
+  registrarRequisicao();
+  enviarJson(200, jsonStatus());
+}
+
+// GET /sensor -> leituras atuais dos sensores
+void rotaSensor() {
+  registrarRequisicao();
+  enviarJson(200, jsonSensor());
+}
+
+// GET /atuador?estado=on | off  -> abre ou fecha a portinha
+void rotaAtuador() {
+  registrarRequisicao();
+
+  if (!server.hasArg("estado")) {
+    enviarJson(400, "{\"ok\":false,\"erro\":\"faltou o parametro estado (on ou off)\"}");
+    return;
+  }
+
+  String estado = server.arg("estado");
+
+  if (estado == "on") {
+    definirPorta(true);
+  } else if (estado == "off") {
+    definirPorta(false);
+  } else {
+    enviarJson(400, "{\"ok\":false,\"erro\":\"estado invalido, use on ou off\"}");
+    return;
+  }
+
+  String r = "{\"ok\":true,\"atuador\":\"porta\",\"estado\":\"";
+  r += portaAberta ? "aberta" : "fechada";
+  r += "\",\"pino\":";
+  r += SERVO_PORTA_PIN;
+  r += "}";
+  enviarJson(200, r);
+}
+
+void rotaNaoEncontrada() {
+  registrarRequisicao();
+  enviarJson(404, "{\"ok\":false,\"erro\":\"rota nao encontrada\"}");
+}
+
+/* =====================================================================
+   7) CONEXAO WI-FI
+   ===================================================================== */
+
+// Plano B: o ESP32 cria a propria rede Wi-Fi.
+void subirAccessPoint() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(AP_SSID, AP_SENHA);
+  modoAP = true;
+
+  String ip = WiFi.softAPIP().toString();
+
+  Serial.println("[WIFI] Subindo rede propria (Access Point).");
+  Serial.printf("[WIFI] Conecte-se a rede \"%s\" com a senha \"%s\"\n", AP_SSID, AP_SENHA);
+  Serial.print("[WIFI] Depois acesse no navegador: http://");
+  Serial.println(ip);
+
+  mostrarOled("DESCARTE AQUI", "Rede propria:", AP_SSID, ip.c_str());
+}
+
+bool conectarWiFi() {
+  Serial.printf("\n[WIFI] Conectando em \"%s\"", WIFI_SSID);
+  mostrarOled("DESCARTE AQUI", "Conectando ao", "Wi-Fi...", nullptr);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_SENHA);
+
+  unsigned long inicio = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - inicio < TIMEOUT_WIFI_MS) {
+    delay(300);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    // Nao conseguimos entrar na rede configurada (fora de alcance, senha
+    // errada ou rede de 5 GHz). Em vez de ficar sem servidor, criamos a nossa.
+    Serial.println("[WIFI] NAO conectou na rede configurada.");
+    subirAccessPoint();
+    return false;
+  }
+
+  modoAP = false;
+  String ip = WiFi.localIP().toString();
+
+  Serial.println("[WIFI] Conectado!");
+  Serial.print("[WIFI] Acesse no navegador: http://");
+  Serial.println(ip);
+
+  mostrarOled("DESCARTE AQUI", "Wi-Fi conectado", ip.c_str(), nullptr);
+  return true;
+}
+
+/* =====================================================================
+   8) SETUP
+   ===================================================================== */
 
 void setup() {
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("\n\n=== DESCARTE AQUI - iniciando ===");
 
-    Serial.begin(115200);
+  // ---------- OLED ----------
+  Wire.begin(OLED_SDA, OLED_SCL);
+  oledOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_ENDERECO);
+  if (!oledOk) {
+    // Antes o codigo parava aqui com while(true). Agora seguimos sem display:
+    // o servidor HTTP continua funcionando e a interface mostra oled_ok: false.
+    Serial.println("[OLED] Nao encontrado - seguindo sem display.");
+  }
 
+  // ---------- Balanca HX711 ----------
+  balanca.begin(HX711_DT, HX711_SCK);
+  if (balanca.wait_ready_timeout(1000)) {
+    balanca.set_scale(FATOR_CALIBRACAO);
+    balanca.tare();
+    balancaOk = true;
+    Serial.println("[HX711] Pronta e tarada.");
+  } else {
+    // wait_ready_timeout evita que tare() trave o ESP32 para sempre
+    // caso o HX711 esteja desconectado.
+    Serial.println("[HX711] Nao respondeu - seguindo sem balanca.");
+  }
 
-    // Oled
+  // ---------- Ultrassonico ----------
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
 
-    Wire.begin(OLED_SDA, OLED_SCL);
+  // ---------- Sensor indutivo ----------
+  pinMode(SENSOR_METAL, INPUT_PULLUP);
 
-    if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+  // ---------- Servos ----------
+  servoSeparacao.attach(SERVO_SEPARACAO_PIN);
+  definirSeparacao(SERVO_INICIAL);
 
-        Serial.println("OLED nao encontrado!");
+  servoPorta.attach(SERVO_PORTA_PIN);
+  definirPorta(false);
 
-        while (true);
-    }
+  // ---------- Wi-Fi ----------
+  conectarWiFi();
 
+  // ---------- Rotas e inicio do servidor ----------
+  server.on("/", HTTP_GET, rotaRaiz);
+  server.on("/style.css", HTTP_GET, rotaCss);
+  server.on("/app.js", HTTP_GET, rotaJs);
+  server.on("/status", HTTP_GET, rotaStatus);
+  server.on("/sensor", HTTP_GET, rotaSensor);
+  server.on("/atuador", HTTP_GET, rotaAtuador);
+  server.onNotFound(rotaNaoEncontrada);
 
-    // Balanca
+  server.begin();
+  Serial.println("[HTTP] Servidor ativo na porta 80.");
 
-    balanca.begin(HX711_DT, HX711_SCK);
-
-
-    // Ultrassonico
-
-    pinMode(TRIG_PIN, OUTPUT);
-    pinMode(ECHO_PIN, INPUT);
-
-    digitalWrite(TRIG_PIN, LOW);
-
-
-    // Sensor indutivo
-
-    pinMode(SENSOR_METAL, INPUT_PULLUP);
-
-
-    // Servo separacao
-
-    servoSeparacao.attach(SERVO_SEPARACAO_PIN);
-
-    servoSeparacao.write(SERVO_INICIAL);
-
-
-    // Servo porta
-
-    servoPorta.attach(SERVO_PORTA_PIN);
-
-    servoPorta.write(PORTA_FECHADA);
-
-    display.clearDisplay();
-
-    display.setTextSize(1);
-    display.setTextColor(SSD1306_WHITE);
-
-    display.setCursor(0, 0);
-    display.println("DESCARTE AQUI");
-
-    display.setCursor(0, 20);
-    display.println("Sistema iniciado!");
-
-    display.display();
-
-    delay(2000);
+  estadoSistema = "Aguardando objeto";
+  aguardar(2000);
 }
 
+/* =====================================================================
+   9) LOOP - ciclo de separacao + atendimento das requisicoes
+   ===================================================================== */
+
 void loop() {
+  // Atende o navegador a cada volta do loop.
+  server.handleClient();
 
-    float distancia = medirDistancia();
+  // Se o Wi-Fi cair, tenta reconectar sem travar o resto.
+  // Em modo Access Point nao ha o que reconectar: a rede e nossa, e chamar
+  // WiFi.reconnect() aqui derrubaria o proprio AP e os clientes conectados.
+  if (!modoAP && millis() - ultimaVerificacaoWiFi > INTERVALO_RECONEXAO_MS) {
+    ultimaVerificacaoWiFi = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[WIFI] Conexao caiu, tentando reconectar...");
+      WiFi.reconnect();
+    }
+  }
 
-    int estadoMetal = digitalRead(SENSOR_METAL);
+  // ---------- Leitura dos sensores ----------
+  distanciaCm = medirDistancia();
+  metalDetectado = (digitalRead(SENSOR_METAL) == LOW);
+  objetoPresente = (distanciaCm > 0 && distanciaCm <= DISTANCIA_DETECCAO);
+  atualizarPeso();
+  ultimaLeituraMs = millis();
 
-    //Objeto detectado
+  if (objetoPresente) {
 
-    if (distancia > 0 && distancia <= DISTANCIA_DETECCAO) {
+    if (metalDetectado) {
+      // ---------- Caminho da pilha (metal) ----------
+      estadoSistema = "Separando metal";
+      definirSeparacao(SERVO_METAL);
+      mostrarOled("DESCARTE AQUI", "Objeto detectado!", "PILHA", "Separando...");
+      aguardar(TEMPO_ESPERA);
 
-        //Caminho da pilha
-        if (estadoMetal == LOW) {
+      // Pesagem
+      estadoSistema = "Pesando";
+      mostrarOled("DESCARTE AQUI", "METAL DETECTADO!", "Aguardando peso...", nullptr);
+      aguardar(TEMPO_ESTABILIZACAO);
 
-            servoSeparacao.write(SERVO_METAL);
+      if (balancaOk && balanca.wait_ready_timeout(1000)) {
+        // Aqui a precisao importa mais que a velocidade, entao tiramos a media
+        // de 5 amostras. Esta chamada bloqueia ~500 ms, mas acontece uma unica
+        // vez por objeto, no momento em que a pesagem realmente ocorre.
+        pesoBruto = balanca.read_average(5);
+        pesoGramas = converterParaGramas(pesoBruto);
 
-            display.clearDisplay();
+        char linhaPeso[24];
+        snprintf(linhaPeso, sizeof(linhaPeso), "Peso: %.1f g", pesoGramas);
 
-            display.setTextSize(1);
-            display.setTextColor(SSD1306_WHITE);
+        Serial.printf("[BALANCA] bruto=%ld  peso=%.1f g\n", pesoBruto, pesoGramas);
+        mostrarOled("DESCARTE AQUI", "PILHA", linhaPeso, nullptr);
+      } else {
+        Serial.println("[BALANCA] Erro na leitura.");
+        mostrarOled("DESCARTE AQUI", "Erro na balanca!", nullptr, nullptr);
+      }
 
-            display.setCursor(0, 0);
-            display.println("DESCARTE AQUI");
+      aguardar(2000);
+      definirSeparacao(SERVO_INICIAL);
+      aguardar(1000);
 
-            display.setCursor(0, 20);
-            display.println("Objeto detectado!");
+    } else {
+      // ---------- Caminho do nao-metal ----------
+      estadoSistema = "Separando nao-metal";
+      definirSeparacao(SERVO_NAO_METAL);
+      mostrarOled("DESCARTE AQUI", "Objeto detectado!", "NAO E PILHA", "Separando...");
+      aguardar(TEMPO_ESPERA);
 
-            display.setCursor(0, 35);
-            display.println("PILHA");
+      // Abre a portinha para o usuario retirar o objeto
+      estadoSistema = "Porta aberta";
+      mostrarOled("NAO PILHA DETECTADO!", "RETIRE O OBJETO!", "Porta aberta!", nullptr);
+      definirPorta(true);
+      aguardar(TEMPO_PORTA_ABERTA);
+      definirPorta(false);
+      aguardar(1000);
 
-            display.setCursor(0, 50);
-            display.println("Separando...");
-
-            display.display();
-
-            delay(TEMPO_ESPERA);
-
-            lerPeso();
-
-            servoSeparacao.write(SERVO_INICIAL);
-
-            delay(1000);
-        }
-
-        //Caminho da não pilha
-
-        else {
-
-            servoSeparacao.write(SERVO_NAO_METAL);
-
-            display.clearDisplay();
-
-            display.setTextSize(1);
-            display.setTextColor(SSD1306_WHITE);
-
-            display.setCursor(0, 0);
-            display.println("DESCARTE AQUI");
-
-            display.setCursor(0, 20);
-            display.println("Objeto detectado!");
-
-            display.setCursor(0, 35);
-            display.println("NAO E PILHA");
-
-            display.setCursor(0, 50);
-            display.println("Separando...");
-
-            display.display();
-
-            delay(TEMPO_ESPERA);
-
-            abrirPorta();
-
-            servoSeparacao.write(SERVO_INICIAL);
-
-            delay(1000);
-        }
+      definirSeparacao(SERVO_INICIAL);
+      aguardar(1000);
     }
 
+    estadoSistema = "Aguardando objeto";
 
-    //Nenhum objeto detectado
+  } else {
+    // ---------- Nenhum objeto ----------
+    estadoSistema = "Aguardando objeto";
+    mostrarOled("DESCARTE AQUI", "Aguardando", "objeto...", nullptr);
+  }
 
-    else {
-
-        display.clearDisplay();
-
-        display.setTextSize(1);
-        display.setTextColor(SSD1306_WHITE);
-
-        display.setCursor(0, 0);
-        display.println("DESCARTE AQUI");
-
-        display.setCursor(0, 25);
-        display.println("Aguardando objeto...");
-
-        display.display();
-    }
-
-    delay(300);
+  aguardar(300);
 }
