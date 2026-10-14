@@ -39,19 +39,6 @@
 // Tempo maximo esperando o Wi-Fi conectar antes de seguir mesmo assim.
 #define TIMEOUT_WIFI_MS 20000
 
-// Modo Access Point (plano B).
-// Se a rede configurada nao estiver ao alcance - o que acontece sempre que
-// levamos o prototipo para fora de casa - o ESP32 cria a PROPRIA rede Wi-Fi.
-// Basta conectar o notebook ou o celular nela e abrir http://192.168.4.1
-// O regulamento permite isso (FAQ 14): nao e preciso internet, so conectividade
-// IP entre o cliente e o ESP32.
-#ifndef AP_SSID
-  #define AP_SSID "DescarteAqui"
-#endif
-#ifndef AP_SENHA
-  #define AP_SENHA "descarte123"   // minimo 8 caracteres, exigencia do ESP32
-#endif
-
 // De quanto em quanto tempo verificamos se o Wi-Fi caiu.
 #define INTERVALO_RECONEXAO_MS 10000
 
@@ -134,9 +121,7 @@ bool portaAberta = false;
 // Estado do sistema mostrado na interface
 const char *estadoSistema = "Iniciando";
 
-// true  = o ESP32 criou a propria rede (Access Point)
-// false = o ESP32 entrou numa rede existente (station)
-bool modoAP = false;
+bool wifiEstavaConectado = false;
 
 unsigned long ultimaLeituraMs = 0;
 unsigned long ultimaVerificacaoWiFi = 0;
@@ -159,7 +144,7 @@ void aguardar(unsigned long ms) {
 
 // Endereco em que o servidor responde, seja qual for o modo de rede.
 String enderecoIP() {
-  return modoAP ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+  return WiFi.localIP().toString();
 }
 
 // Escreve ate 4 linhas no OLED. Se o display nao existir, nao faz nada.
@@ -247,13 +232,13 @@ String jsonStatus() {
   j += estadoSistema;
 
   j += "\",\"wifi_conectado\":";
-  j += (modoAP || WiFi.status() == WL_CONNECTED) ? "true" : "false";
+  j += (WiFi.status() == WL_CONNECTED) ? "true" : "false";
 
   j += ",\"modo_rede\":\"";
-  j += modoAP ? "AP" : "STA";
+  j += "STA";
 
   j += "\",\"ssid\":\"";
-  j += modoAP ? AP_SSID : WIFI_SSID;
+  j += WIFI_SSID;
 
   j += "\",\"ip\":\"";
   j += enderecoIP();
@@ -394,27 +379,12 @@ void rotaNaoEncontrada() {
    7) CONEXAO WI-FI
    ===================================================================== */
 
-// Plano B: o ESP32 cria a propria rede Wi-Fi.
-void subirAccessPoint() {
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, AP_SENHA);
-  modoAP = true;
-
-  String ip = WiFi.softAPIP().toString();
-
-  Serial.println("[WIFI] Subindo rede propria (Access Point).");
-  Serial.printf("[WIFI] Conecte-se a rede \"%s\" com a senha \"%s\"\n", AP_SSID, AP_SENHA);
-  Serial.print("[WIFI] Depois acesse no navegador: http://");
-  Serial.println(ip);
-
-  mostrarOled("DESCARTE AQUI", "Rede propria:", AP_SSID, ip.c_str());
-}
-
 bool conectarWiFi() {
   Serial.printf("\n[WIFI] Conectando em \"%s\"", WIFI_SSID);
   mostrarOled("DESCARTE AQUI", "Conectando ao", "Wi-Fi...", nullptr);
 
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_SENHA);
 
   unsigned long inicio = millis();
@@ -425,14 +395,13 @@ bool conectarWiFi() {
   Serial.println();
 
   if (WiFi.status() != WL_CONNECTED) {
-    // Nao conseguimos entrar na rede configurada (fora de alcance, senha
-    // errada ou rede de 5 GHz). Em vez de ficar sem servidor, criamos a nossa.
-    Serial.println("[WIFI] NAO conectou na rede configurada.");
-    subirAccessPoint();
+    Serial.println("[WIFI] Sem conexao. Confira o hotspot 2,4 GHz, nome e senha.");
+    Serial.println("[WIFI] Continuaremos tentando conectar ao hotspot.");
+    mostrarOled("DESCARTE AQUI", "Sem Wi-Fi", "Ative o hotspot", "2,4 GHz");
     return false;
   }
 
-  modoAP = false;
+  wifiEstavaConectado = true;
   String ip = WiFi.localIP().toString();
 
   Serial.println("[WIFI] Conectado!");
@@ -515,18 +484,18 @@ void setup() {
 void loop() {
   // Atende o navegador a cada volta do loop.
   server.handleClient();
-
-  // Se o Wi-Fi cair, tenta reconectar sem travar o resto.
-  // Em modo Access Point nao ha o que reconectar: a rede e nossa, e chamar
-  // WiFi.reconnect() aqui derrubaria o proprio AP e os clientes conectados.
-  if (!modoAP && millis() - ultimaVerificacaoWiFi > INTERVALO_RECONEXAO_MS) {
-    ultimaVerificacaoWiFi = millis();
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("[WIFI] Conexao caiu, tentando reconectar...");
-      WiFi.reconnect();
-    }
+  bool wifiConectado = WiFi.status() == WL_CONNECTED;
+  if (wifiConectado && !wifiEstavaConectado) {
+    Serial.print("[WIFI] Reconectado! Acesse: http://");
+    Serial.println(enderecoIP());
+    mostrarOled("DESCARTE AQUI", "Wi-Fi conectado", enderecoIP().c_str(), nullptr);
   }
-
+  wifiEstavaConectado = wifiConectado;
+  if (!wifiConectado && millis() - ultimaVerificacaoWiFi >= INTERVALO_RECONEXAO_MS) {
+    ultimaVerificacaoWiFi = millis();
+    Serial.println("[WIFI] Tentando conectar ao hotspot...");
+    WiFi.reconnect();
+  }
   // ---------- Leitura dos sensores ----------
   distanciaCm = medirDistancia();
   metalDetectado = (digitalRead(SENSOR_METAL) == LOW);

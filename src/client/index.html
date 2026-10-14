@@ -10,7 +10,7 @@
 
   <header class="cabecalho">
     <h1>Descarte Aqui</h1>
-    <p class="subtitulo">Sistema inteligente para descarte de resíduos &middot; ESP32 como servidor HTTP</p>
+    <p class="subtitulo">Sistema inteligente para descarte de resíduos</p>
     <div class="linha-conexao">
       <span id="badge-conexao" class="badge badge-off">Desconectado</span>
       <span class="ip">IP do ESP32: <strong id="ip-esp32">--</strong></span>
@@ -25,7 +25,7 @@
       <p id="estado-sistema" class="estado-grande">--</p>
     </section>
 
-    <section class="grade">
+    <section class="grade" aria-label="Sensores e atuadores">
 
       <article class="cartao">
         <h3>Objeto presente</h3>
@@ -72,7 +72,7 @@
         <button id="btn-abrir" class="botao botao-on">Abrir porta</button>
         <button id="btn-fechar" class="botao botao-off">Fechar porta</button>
       </div>
-      <p id="retorno-comando" class="retorno"></p>
+      <p id="retorno-comando" class="retorno" role="status" aria-live="polite"></p>
     </section>
 
   </main>

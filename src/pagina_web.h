@@ -20,7 +20,7 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
 
   <header class="cabecalho">
     <h1>Descarte Aqui</h1>
-    <p class="subtitulo">Sistema inteligente para descarte de resíduos &middot; ESP32 como servidor HTTP</p>
+    <p class="subtitulo">Sistema inteligente para descarte de resíduos</p>
     <div class="linha-conexao">
       <span id="badge-conexao" class="badge badge-off">Desconectado</span>
       <span class="ip">IP do ESP32: <strong id="ip-esp32">--</strong></span>
@@ -35,7 +35,7 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
       <p id="estado-sistema" class="estado-grande">--</p>
     </section>
 
-    <section class="grade">
+    <section class="grade" aria-label="Sensores e atuadores">
 
       <article class="cartao">
         <h3>Objeto presente</h3>
@@ -82,7 +82,7 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
         <button id="btn-abrir" class="botao botao-on">Abrir porta</button>
         <button id="btn-fechar" class="botao botao-off">Fechar porta</button>
       </div>
-      <p id="retorno-comando" class="retorno"></p>
+      <p id="retorno-comando" class="retorno" role="status" aria-live="polite"></p>
     </section>
 
   </main>
@@ -294,6 +294,120 @@ main {
   border-top: 1px solid #263141;
   font-size: 0.82rem;
   color: #6f7f93;
+}
+
+.cabecalho,
+main,
+.rodape {
+  width: 100%;
+  max-width: 1280px;
+}
+
+main > *,
+.cartao {
+  min-width: 0;
+}
+
+.ip strong,
+.valor {
+  overflow-wrap: anywhere;
+}
+
+.botao {
+  min-height: 48px;
+  transition: filter 150ms ease;
+}
+
+.botao:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.botao:focus-visible {
+  outline: 3px solid #e8edf3;
+  outline-offset: 4px;
+}
+
+@media (min-width: 1024px) {
+  body {
+    padding: 0 40px 32px;
+  }
+
+  .cabecalho {
+    padding: 40px 0 28px;
+  }
+
+  .cabecalho h1 {
+    font-size: 2.4rem;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 24px;
+    padding: 28px 0;
+    align-items: start;
+  }
+
+  main > .painel:first-child {
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0;
+    padding: 24px;
+  }
+
+  .estado-grande {
+    font-size: 1.8rem;
+  }
+
+  .grade {
+    grid-column: 1;
+    grid-row: 2;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin: 0;
+    gap: 18px;
+  }
+
+  .cartao {
+    min-height: 156px;
+    padding: 24px 20px;
+  }
+
+  main > .painel:last-child {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin: 0;
+    padding: 24px;
+    position: sticky;
+    top: 24px;
+  }
+
+  .botoes {
+    flex-direction: column;
+  }
+
+  .botao {
+    width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .grade {
+    grid-template-columns: 1fr;
+  }
+
+  .linha-conexao {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .botoes {
+    flex-direction: column;
+  }
+
+  .botao {
+    width: 100%;
+  }
 }
 )rawliteral";
 

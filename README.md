@@ -192,14 +192,21 @@ As bibliotecas são baixadas automaticamente pelo PlatformIO a partir do
 
 ### Passo 1 — configurar o Wi-Fi
 
-Abra `src/main.cpp` e preencha as duas linhas no início do arquivo
-(seção `1) CONFIGURACAO DO WI-FI`):
+Ative o **roteador Wi-Fi / hotspot do celular em 2,4 GHz**.
+Abra `src/config_wifi.h` (criado nesta máquina) e preencha:
 
 ```cpp
-const char *WIFI_SSID  = "COLOQUE_O_NOME_DA_REDE";
-const char *WIFI_SENHA = "COLOQUE_A_SENHA";
+#define WIFI_SSID  "NOME_DO_HOTSPOT_DO_CELULAR"
+#define WIFI_SENHA "SENHA_DO_HOTSPOT_DO_CELULAR"
 ```
 
+Para outro integrante, copie `src/config_wifi.exemplo.h` para `src/config_wifi.h`.
+O arquivo com a senha é ignorado pelo Git. Após trocar os dados, compile e
+envie novamente o firmware para a placa.
+
+O ESP32 conecta ao hotspot como cliente (STA). Se a conexão falhar, continua
+tentando sem criar uma rede própria. O IP recebido aparece no monitor serial,
+inclusive após reconectar.
 ### Passo 2 — compilar e enviar
 
 Pelo VS Code: botões **Build** (✓) e **Upload** (→) na barra do PlatformIO.
@@ -260,7 +267,7 @@ no Postman.
 ### 7.2 Roteiro de teste completo
 
 1. Abrir o projeto no VS Code com a extensão PlatformIO.
-2. Abrir `src/main.cpp` e preencher `WIFI_SSID` e `WIFI_SENHA`.
+2. Ativar o hotspot e preencher `WIFI_SSID` e `WIFI_SENHA` em `src/config_wifi.h`.
 3. Compilar (**Build**) e corrigir eventuais erros.
 4. Enviar para o ESP32 (**Upload**).
 5. Abrir o monitor serial em **115200**.
@@ -275,6 +282,20 @@ no Postman.
 14. Aproximar um objeto metálico a menos de 5 cm e verificar o ciclo de separação com pesagem.
 15. Aproximar um objeto não metálico e verificar a abertura automática da portinha.
 16. Desligar o Wi-Fi do computador e confirmar que o selo muda para **Desconectado** (tratamento de falha de conexão).
+
+### Teste com várias pessoas no hotspot
+
+1. Conecte o ESP32 e dois ou mais celulares/notebooks ao mesmo hotspot.
+2. Abra em todos `http://<IP informado pelo ESP32>/` e confira as leituras.
+3. Teste os comandos da porta: todos controlam a mesma porta, e o último
+   comando recebido prevalece.
+4. Desligue e ligue o hotspot e confira a reconexão no monitor serial.
+   Se o IP mudar, abra o novo endereço nos aparelhos.
+
+O limite de aparelhos depende do celular. O servidor atende as requisições
+em sequência, permitindo o uso da página por várias pessoas. Caso os clientes
+não consigam acessar a placa, verifique o isolamento de clientes do hotspot.
+Não é necessário acesso à internet para usar a página local.
 
 ### 7.3 Testar a interface sem a placa
 
