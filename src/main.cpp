@@ -318,6 +318,12 @@ void rotaRaiz() {
   server.send_P(200, "text/html", PAGINA_HTML);
 }
 
+// GET /3d -> visualizacao 3D do ponto de coleta
+void rota3d() {
+  registrarRequisicao();
+  server.send_P(200, "text/html", PAGINA_3D);
+}
+
 // GET /style.css
 void rotaCss() {
   registrarRequisicao();
@@ -463,6 +469,7 @@ void setup() {
 
   // ---------- Rotas e inicio do servidor ----------
   server.on("/", HTTP_GET, rotaRaiz);
+  server.on("/3d", HTTP_GET, rota3d);
   server.on("/style.css", HTTP_GET, rotaCss);
   server.on("/app.js", HTTP_GET, rotaJs);
   server.on("/status", HTTP_GET, rotaStatus);

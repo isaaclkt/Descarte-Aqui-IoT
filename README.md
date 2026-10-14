@@ -85,7 +85,8 @@ Descarte-Aqui-IoT/
 │   └── client/                # fonte da aplicação cliente
 │       ├── index.html
 │       ├── style.css
-│       └── app.js
+│       ├── app.js
+│       └── ponto_coleta3d.html   # visualização 3D (Three.js via CDN)
 ├── tools/
 │   └── gerar_pagina_web.py    # gera pagina_web.h a partir de src/client/
 ├── platformio.ini             # dependências e configuração da placa
@@ -117,6 +118,7 @@ testadas direto na barra de endereço do navegador.
 | Rota | Função | Resposta |
 |---|---|---|
 | `/` | Página principal | HTML |
+| `/3d` | Visualização 3D do ponto de coleta | HTML |
 | `/style.css` | Estilos da página | CSS |
 | `/app.js` | JavaScript da página | JS |
 | `/status` | Estado geral do sistema | JSON |
@@ -178,6 +180,105 @@ Erros retornam o código HTTP adequado:
 | Parâmetro ausente | 400 | `{"ok":false,"erro":"faltou o parametro estado (on ou off)"}` |
 | Valor inválido | 400 | `{"ok":false,"erro":"estado invalido, use on ou off"}` |
 | Rota inexistente | 404 | `{"ok":false,"erro":"rota nao encontrada"}` |
+
+## 5.1 Organização da página de controle
+
+A página principal (`/`) continua sendo o painel de comando. Ela ganhou um
+painel com o modelo 3D ao lado dos cartões de sensores no computador, e abaixo
+deles no celular.
+
+O 3D **não carrega sozinho**: são 117 KB servidos pela placa, e pelo Wi-Fi real
+isso leva alguns segundos. Há um botão "Mostrar modelo 3D" que carrega o iframe
+sob demanda, e um link "Abrir em tela cheia" que abre `/3d` numa aba separada.
+
+### Como os dois ficam sincronizados
+
+A regra é que **o estado verdadeiro é o do ESP32**: o 3D nunca mostra algo que a
+placa não confirmou.
+
+Ao clicar em "Abrir porta" ou "Fechar porta":
+
+1. a página chama `/atuador?estado=on|off`, como sempre fez;
+2. os dois botões ficam desabilitados enquanto o comando está em andamento;
+3. **só depois** da resposta `{"ok": true}` a página avisa o 3D;
+4. se a placa recusar (HTTP 400) ou não responder, o 3D **não se move** e a
+   página mostra o erro.
+
+O aviso vai por dois caminhos: `postMessage` para o iframe e `BroadcastChannel`,
+que alcança o 3D aberto em outra aba. A mensagem serve só para a resposta
+imediata — o `/status` seguinte confirma ou corrige, e é ele que manda quando o
+estado muda por outro caminho (ciclo automático do firmware, `curl`, outra aba).
+
+### Quem consulta o ESP32
+
+O `WebServer` do ESP32 atende **uma conexão por vez**, então só um cliente
+consulta a placa:
+
+| Situação | Quem consulta | Intervalo |
+|---|---|---|
+| 3D embutido na página de controle (`/3d?embed=1`) | A página de controle | 2 s |
+| 3D aberto sozinho (`/3d`) | O próprio 3D | 500 ms |
+
+O 3D detecta o modo embutido pelo parâmetro `?embed=1` e, nesse caso, desliga o
+polling próprio e passa a esperar as mensagens do pai. Os 2 s da página de
+controle bastam porque o estado mais curto do ciclo (`Pesando`) dura ~3,5 s.
+
+O 3D expõe `descarteAqui.aplicarEstadoReal(status, sensor)`, usada tanto pelas
+mensagens quanto pelo polling, e mostra no cartão da portinha de onde veio a
+última mudança: "comando da página" ou "estado do ESP32".
+
+## 5.2 Visualização 3D (`/3d`)
+
+A rota `/3d` serve uma maquete tridimensional do ponto de coleta que espelha o
+estado real do equipamento. Ela é um arquivo único, `src/client/ponto_coleta3d.html`,
+embutido no firmware junto com as demais páginas.
+
+**Como abrir:** pelo link "Ver o modelo 3D" no topo da página principal, ou
+digitando `http://<ip-do-esp32>/3d` direto no navegador.
+
+**Dois modos de operação:**
+
+| Modo | Quando acontece | O que o selo mostra |
+|---|---|---|
+| ESP32 ao vivo | A placa respondeu à última consulta | `ESP32 ao vivo · <ip>` (verde) |
+| Simulação | Três consultas seguidas falharam | `Sem conexão com o ESP32 · modo simulação` (âmbar) |
+
+A troca é automática nos dois sentidos: basta a placa voltar a responder para o
+modelo religar no estado real. Em modo ao vivo os botões de simulação ficam
+desabilitados, para que a animação local não dispute o controle dos servos.
+
+**O que cada dado controla no modelo:**
+
+| Campo do JSON | Efeito no 3D |
+|---|---|
+| `estado` | Tela do OLED e etapa destacada no painel de fluxo |
+| `servo_separacao` | Inclinação da bandeja, proporcional: `(ângulo − 90) / 70` |
+| `porta` | Ângulo da portinha (substitui a lógica própria do modelo) |
+| `objeto_presente`, `distancia_cm` | Feixe e brilho do sensor de presença |
+| `metal_detectado` | LED do sensor indutivo: verde para metal, vermelho para não metal |
+| `peso_g` | Tela de pesagem do OLED |
+| `ip`, `rssi`, `oled_ok`, `balanca_ok`, `heap_livre` | Selo de status e cartão de cada componente |
+
+O LED do indutivo só fica verde ou vermelho quando há objeto presente. Em
+repouso o pino fica em `HIGH` por causa do `INPUT_PULLUP`, e mostrar "não é
+metal" o tempo todo seria enganoso.
+
+**Intervalo de consulta:** 500 ms, com `/status` e `/sensor` buscados em
+sequência, nunca em paralelo. O `WebServer` do ESP32 atende uma conexão por vez,
+então dois sockets simultâneos só criariam disputa. Cada resposta tem ~300 bytes.
+
+### Limitações conhecidas
+
+- **O Three.js vem de CDN** (`cdn.jsdelivr.net`). Se o celular estiver conectado
+  a uma rede sem saída para a internet, a biblioteca não baixa e o 3D não
+  carrega — a página mostra um aviso. A página principal (`/`) não depende de
+  CDN e continua funcionando normalmente.
+- O corpo marcado como **"Sensor previsto"**, na parede do compartimento de
+  rejeição, não corresponde a nenhum sensor instalado. O protótipo tem um único
+  HC-SR04 e ele fica na entrada (Sensor 1).
+- O valor da pesagem **não fica retido**: `atualizarPeso()` sobrescreve
+  `peso_g` com a leitura instantânea a cada volta do loop, então o peso medido
+  no estado `Pesando` só sobrevive alguns segundos.
 
 ## 6. Instalação e execução
 
@@ -297,7 +398,16 @@ em sequência, permitindo o uso da página por várias pessoas. Caso os clientes
 não consigam acessar a placa, verifique o isolamento de clientes do hotspot.
 Não é necessário acesso à internet para usar a página local.
 
-### 7.3 Testar a interface sem a placa
+### 7.3 Testar o 3D sem a placa
+
+Existe um mock em Python que responde `/status` e `/sensor` no formato do
+README e percorre os cinco estados do ciclo. Aponte a constante
+`ESP32_BASE_URL`, no início do bloco "CAMADA DE DADOS" de
+`src/client/ponto_coleta3d.html`, para o endereço do mock e abra o arquivo no
+navegador. Para conferir o fallback, basta derrubar o mock: após três consultas
+falhas o modelo cai para simulação, e volta sozinho quando o servidor retorna.
+
+### 7.4 Testar a interface sem a placa
 
 Dá para abrir `src/client/index.html` direto no navegador apontando para o
 ESP32: basta preencher a constante no início de `src/client/app.js`.

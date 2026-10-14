@@ -21,6 +21,7 @@ ARQUIVOS = [
     ("index.html", "PAGINA_HTML"),
     ("style.css", "PAGINA_CSS"),
     ("app.js", "PAGINA_JS"),
+    ("ponto_coleta3d.html", "PAGINA_3D"),
 ]
 
 DELIMITADOR = "rawliteral"
@@ -65,6 +66,8 @@ def main():
 
     tamanho = DESTINO.stat().st_size
     print(f"Gerado {DESTINO.relative_to(RAIZ)} ({tamanho} bytes)")
+    for nome, constante in ARQUIVOS:
+        print(f"  {constante:<12} {(ORIGEM / nome).stat().st_size:>7} bytes  ({nome})")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@
       <span id="badge-conexao" class="badge badge-off">Desconectado</span>
       <span class="ip">IP do ESP32: <strong id="ip-esp32">--</strong></span>
       <span class="ip">Rede: <strong id="rede-esp32">--</strong></span>
+      <a class="link-3d" href="/3d">Ver o modelo 3D</a>
     </div>
   </header>
 
@@ -24,6 +25,8 @@
       <h2>Estado do sistema</h2>
       <p id="estado-sistema" class="estado-grande">--</p>
     </section>
+
+    <div class="conteudo">
 
     <section class="grade" aria-label="Sensores e atuadores">
 
@@ -64,6 +67,18 @@
       </article>
 
     </section>
+
+    <section class="painel painel-3d" aria-label="Modelo 3D do equipamento">
+      <h2>Modelo 3D</h2>
+      <p class="aviso">Espelho visual do equipamento: mostra apenas o que o ESP32 confirmou.</p>
+      <div class="moldura-3d" id="moldura-3d">
+        <button id="btn-carregar-3d" class="botao botao-on">Mostrar modelo 3D</button>
+        <p class="detalhe">São 113 KB servidos pela placa, o carregamento leva alguns segundos.</p>
+      </div>
+      <p class="detalhe"><a class="link-3d" href="/3d" target="_blank" rel="noopener">Abrir em tela cheia</a></p>
+    </section>
+
+    </div>
 
     <section class="painel">
       <h2>Comandos</h2>

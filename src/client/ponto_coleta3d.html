@@ -136,6 +136,8 @@ body {
 }
 .status__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 8px rgba(242, 184, 75, 0.6); }
 .status.is-running .status__dot { background: var(--glow); box-shadow: 0 0 8px rgba(94, 226, 122, 0.8); }
+.status.is-live .status__dot { background: var(--glow); box-shadow: 0 0 8px rgba(94, 226, 122, 0.8); }
+.status.is-error .status__dot { background: #ff4a3a; box-shadow: 0 0 8px rgba(255, 74, 58, 0.8); }
 
 .flow {
   position: absolute;
@@ -412,6 +414,12 @@ body {
       <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z"/></svg>
       Simular objeto rejeitado
     </button>
+    <span class="dock__divider" aria-hidden="true"></span>
+    <div class="dock__group" role="group" aria-label="Comandar a portinha no ESP32">
+      <span class="dock__label">Portinha</span>
+      <button class="btn" type="button" id="abrirPortinha" data-atuador="on" disabled>Abrir</button>
+      <button class="btn btn--ghost" type="button" id="fecharPortinha" data-atuador="off" disabled>Fechar</button>
+    </div>
   </nav>
 
   <p class="hint">Arraste para girar · Role para aproximar · Botão direito para mover<br>Clique em um componente para ver detalhes</p>
@@ -481,8 +489,8 @@ const COMPONENTS = {
   },
   sensor1: {
     label: 'Sensor 1', side: 'right', distance: 0.75, stage: 2,
-    title: 'Sensor 1 · presença',
-    text: 'Par infravermelho emissor e receptor montado em volta do tubo-guia. Quando o feixe é interrompido, o sistema sabe que um objeto entrou.'
+    title: 'Sensor 1 · presença (HC-SR04)',
+    text: 'Sensor ultrassônico montado na entrada, ligado aos pinos TRIG 19 e ECHO 18. Mede a distância até o objeto e, abaixo de 5 cm, dispara o ciclo de separação.'
   },
   sensor2: {
     label: 'Sensor 2', side: 'right', distance: 0.8, stage: 3,
@@ -510,14 +518,14 @@ const COMPONENTS = {
     text: 'Recebe tudo o que não foi identificado como pilha. O piso inclinado leva o objeto até a portinha de devolução, na frente do equipamento.'
   },
   hcsr04: {
-    label: 'HC-SR04', side: 'right', distance: 0.75,
-    title: 'Sensor ultrassônico HC-SR04',
-    text: 'Fixado na parede do compartimento de rejeição, mede através da região da portinha. Enquanto detectar o objeto, a portinha continua aberta.'
+    label: 'Sensor previsto', side: 'right', distance: 0.75,
+    title: 'Posição prevista · ainda não instalada',
+    text: 'O protótipo tem um único HC-SR04, e ele fica na entrada (Sensor 1). Este corpo marca onde entraria um segundo sensor para confirmar a retirada do objeto — ele ainda não existe no firmware.'
   },
   portinha: {
     label: 'Portinha + servo', side: 'right', outside: true, distance: 0.8,
     title: 'Portinha de devolução',
-    text: 'Portinha articulada por uma dobradiça superior. Um servo, ligado a ela por braço e haste, abre quando o HC-SR04 detecta o objeto e fecha só quando a área fica livre.'
+    text: 'Portinha articulada por uma dobradiça superior, movida por um servo no GPIO 26 entre 0° (fechada) e 90° (aberta). No ciclo automático ela abre por 5 segundos fixos quando o objeto não é metálico, e também aceita comando pela rota /atuador.'
   },
   celula: {
     label: 'Célula de carga + HX711', short: 'Célula de carga', side: 'left', distance: 0.85,
@@ -561,6 +569,7 @@ const ui = {
   cardClose: document.getElementById('cardClose'),
   statusChip: document.getElementById('statusChip'),
   statusText: document.getElementById('statusText'),
+  doorButtons: [...document.querySelectorAll('[data-atuador]')],
   brandMark: document.getElementById('brandMark')
 };
 
@@ -1379,7 +1388,7 @@ function buildSensors(mat) {
     addBox(sensor1, [0.024, 0.032, 0.032], mat.blackPlastic, [sx * 0.077, SENSOR1_Y, FLOW_Z]);
     addMesh(sensor1, new THREE.SphereGeometry(0.008, 16, 12), sx < 0 ? emitterLed : standard(0x0e1a24, 0.15, 0.2), [sx * 0.064, SENSOR1_Y, FLOW_Z]);
   }
-  const boardTexture = createSmallBoardTexture('#1d4ea3', 'IR');
+  const boardTexture = createSmallBoardTexture('#1d4ea3', 'HC-SR04');
   const board = new THREE.MeshStandardMaterial({ map: boardTexture, roughness: 0.5 });
   addBox(sensor1, [0.085, 0.045, 0.004], [mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, board, mat.pcbBlue], [0.035, SENSOR1_Y, -0.032]);
   const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xff4a4a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -1857,7 +1866,7 @@ function focusComponent(key) {
   parts.highlightBox.visible = true;
   ui.cardEyebrow.textContent = info.stage ? `Etapa ${info.stage} do fluxo` : 'Componente';
   ui.cardTitle.textContent = info.title;
-  ui.cardText.textContent = info.text;
+  ui.cardText.textContent = textoDoCartao(key);
   ui.card.hidden = false;
   Object.entries(hotspots).forEach(([hotspotKey, element]) => element.classList.toggle('is-active', hotspotKey === key));
   if (!state.simulationRunning) markFlow(key, { focusOnly: true });
@@ -1893,9 +1902,7 @@ function setOledState(screenKey, data = {}) {
 
 function setSimulationUi(running) {
   state.simulationRunning = running;
-  ui.simulateButtons.forEach((button) => { button.disabled = running; });
-  ui.statusChip.classList.toggle('is-running', running);
-  ui.statusText.textContent = running ? 'Simulação visual em andamento' : 'Visualização · sem conexão com o ESP32';
+  atualizarSelo();
 }
 
 function chuteNormal(side) {
@@ -1947,13 +1954,20 @@ function applyDoorAngle(angle) {
 }
 
 function updateRejectDoor(delta) {
-  rejectDoor.detecting = [...rejectDoor.items].some(isInDetectionZone);
-  if (rejectDoor.detecting) {
-    rejectDoor.clearTime = 0;
-    rejectDoor.target = DOOR.openAngle;
-  } else if (rejectDoor.target > 0) {
-    rejectDoor.clearTime += delta;
-    if (rejectDoor.clearTime >= DOOR.closeDelay) rejectDoor.target = 0;
+  if (esp32.aoVivo) {
+    // Ao vivo a portinha obedece ao campo "porta" do /status.
+    // A deteccao propria do 3D fica desligada para nao disputar o controle.
+    rejectDoor.detecting = false;
+    rejectDoor.target = esp32.portaAberta ? DOOR.openAngle : 0;
+  } else {
+    rejectDoor.detecting = [...rejectDoor.items].some(isInDetectionZone);
+    if (rejectDoor.detecting) {
+      rejectDoor.clearTime = 0;
+      rejectDoor.target = DOOR.openAngle;
+    } else if (rejectDoor.target > 0) {
+      rejectDoor.clearTime += delta;
+      if (rejectDoor.clearTime >= DOOR.closeDelay) rejectDoor.target = 0;
+    }
   }
   const step = DOOR.speed * delta;
   rejectDoor.angle += THREE.MathUtils.clamp(rejectDoor.target - rejectDoor.angle, -step, step);
@@ -1964,13 +1978,28 @@ function updateRejectDoor(delta) {
 function doorStatus() {
   const isOpen = rejectDoor.angle >= DOOR.openAngle - 0.001;
   const isClosed = rejectDoor.angle <= 0.001;
+
+  if (esp32.aoVivo) {
+    if (esp32.portaAberta) {
+      const vindoDeComando = esp32.origem === 'comando da página';
+      return isOpen
+        ? ['Portinha aberta', vindoDeComando
+            ? 'Aberta por comando da página de controle. O ESP32 confirmou o movimento do servo.'
+            : 'O firmware mantém a portinha aberta por 5 segundos fixos para a retirada do objeto.']
+        : ['Abrindo a portinha', 'O ESP32 comandou a abertura do servo no GPIO 26.'];
+    }
+    return isClosed
+      ? ['Portinha fechada', 'Aguardando o próximo objeto não metálico.']
+      : ['Fechando a portinha', 'O tempo de abertura terminou e o servo está fechando a portinha.'];
+  }
+
   if (rejectDoor.detecting) {
     return isOpen
-      ? ['Portinha aberta', 'HC-SR04 detectando o objeto. O servo mantém a portinha aberta enquanto ele estiver na região.']
-      : ['Abrindo a portinha', 'HC-SR04 detectou o objeto. O servo está abrindo a portinha.'];
+      ? ['Portinha aberta', 'Simulação: o objeto está na região da portinha.']
+      : ['Abrindo a portinha', 'Simulação: o servo está abrindo a portinha.'];
   }
-  if (rejectDoor.target > 0) return ['Confirmando área livre', 'HC-SR04 não detecta mais o objeto. A portinha segue aberta por um instante.'];
-  if (!isClosed) return ['Fechando a portinha', 'Área livre. O servo está fechando a portinha.'];
+  if (rejectDoor.target > 0) return ['Confirmando área livre', 'Simulação: a portinha segue aberta por um instante.'];
+  if (!isClosed) return ['Fechando a portinha', 'Simulação: área livre, o servo está fechando a portinha.'];
   return ['Portinha fechada', 'Aguardando um novo objeto na região da portinha.'];
 }
 
@@ -1980,7 +2009,7 @@ function updateDoorStatus() {
   const key = title + text;
   if (key === rejectDoor.lastStatus) return;
   rejectDoor.lastStatus = key;
-  ui.cardEyebrow.textContent = 'HC-SR04 + servo · portinha de rejeição';
+  ui.cardEyebrow.textContent = 'Servo · portinha de rejeição';
   ui.cardTitle.textContent = title;
   ui.cardText.textContent = text;
   ui.card.hidden = false;
@@ -2029,7 +2058,7 @@ function focusRejectDoorArea() {
 }
 
 async function simulateRejectedObject() {
-  if (state.simulationRunning) return;
+  if (state.simulationRunning || esp32.aoVivo) return;
   setSimulationUi(true);
   clearFocus();
   if (state.viewMode !== 'interior') setViewMode('interior', { animateCamera: false });
@@ -2055,7 +2084,7 @@ async function clearBin(kind) {
 }
 
 async function simulateDisposal(kind) {
-  if (state.simulationRunning) return;
+  if (state.simulationRunning || esp32.aoVivo) return;
   setSimulationUi(true);
   clearFocus();
   const isBattery = kind === 'pilha';
@@ -2384,6 +2413,301 @@ function buildDevice() {
   applyXray(0);
 }
 
+/* =====================================================================
+   CAMADA DE DADOS - consome /status e /sensor do ESP32.
+   Separada do codigo 3D: so le o JSON e empurra o resultado para a cena.
+   ===================================================================== */
+
+// Vazio quando a pagina e servida pela propria placa (mesma origem).
+// Para abrir o arquivo localmente, coloque aqui o IP: "http://192.168.1.100"
+const ESP32_BASE_URL = '';
+
+const INTERVALO_CONSULTA_MS = 500;
+const TIMEOUT_CONSULTA_MS = 1500;
+const FALHAS_ATE_SIMULACAO = 3;
+
+const SERVO_REPOUSO = 90;
+const SERVO_CURSO = 70;
+
+const TELA_POR_ESTADO = {
+  'Aguardando objeto': 'aguardando',
+  'Separando metal': 'pilha',
+  'Pesando': 'pesagem',
+  'Separando nao-metal': 'rejeitado',
+  'Porta aberta': 'rejeitado'
+};
+
+const ETAPA_POR_ESTADO = {
+  'Aguardando objeto': null,
+  'Separando metal': 'servo',
+  'Pesando': 'pilhas',
+  'Separando nao-metal': 'servo',
+  'Porta aberta': 'rejeicao'
+};
+
+// Embutido = dentro do iframe da pagina de controle. Nesse caso nao fazemos
+// polling proprio: o pai ja consulta o ESP32 e repassa o estado por
+// postMessage. Uma unica fonte de consulta evita dobrar a carga no WebServer,
+// que atende uma conexao por vez.
+const EMBUTIDO = new URLSearchParams(location.search).has('embed');
+
+const CANAL_SINCRONIA = 'descarte-aqui';
+
+const esp32 = {
+  aoVivo: false,
+  falhas: 0,
+  consultando: false,
+  status: null,
+  sensor: null,
+  portaAberta: false,
+  ultimaTela: '',
+  mensagemErro: '',
+  erroAte: 0,
+  origem: ''
+};
+
+async function buscarJson(rota) {
+  const controle = new AbortController();
+  const limite = setTimeout(() => controle.abort(), TIMEOUT_CONSULTA_MS);
+  try {
+    const resposta = await fetch(ESP32_BASE_URL + rota, { signal: controle.signal, cache: 'no-store' });
+    if (!resposta.ok) throw new Error('HTTP ' + resposta.status);
+    return await resposta.json();
+  } finally {
+    clearTimeout(limite);
+  }
+}
+
+// O servo real vai de 20 a 160 graus com repouso em 90; a bandeja do 3D
+// inclina de -TRAY.tilt a +TRAY.tilt. A conversao e proporcional.
+function inclinacaoReal(servoGraus) {
+  const proporcao = (servoGraus - SERVO_REPOUSO) / SERVO_CURSO;
+  return THREE.MathUtils.clamp(proporcao, -1, 1) * TRAY.tilt;
+}
+
+function detalheAoVivo(key) {
+  if (!esp32.aoVivo || !esp32.status || !esp32.sensor) return '';
+  const s = esp32.status;
+  const n = esp32.sensor;
+  if (key === 'sensor1') {
+    return n.distancia_cm < 0
+      ? 'Agora: sem eco de retorno.'
+      : `Agora: ${n.distancia_cm.toFixed(1)} cm · objeto ${n.objeto_presente ? 'presente' : 'ausente'}.`;
+  }
+  if (key === 'sensor2') {
+    if (!n.objeto_presente) return 'Agora: sem objeto sobre a bandeja.';
+    return `Agora: ${n.metal_detectado ? 'metal detectado' : 'não metálico'}.`;
+  }
+  if (key === 'celula') {
+    return s.balanca_ok
+      ? `Agora: ${n.peso_g.toFixed(1)} g (bruto ${n.peso_bruto}).`
+      : 'Agora: a balança não respondeu na inicialização.';
+  }
+  if (key === 'oled') {
+    return s.oled_ok ? `Agora: exibindo "${s.estado}".` : 'Agora: display não encontrado.';
+  }
+  if (key === 'servo') return `Agora: servo de separação em ${s.servo_separacao}°.`;
+  if (key === 'portinha') {
+    const origem = esp32.origem ? ` (${esp32.origem})` : '';
+    return `Agora: portinha ${s.porta}${origem}.`;
+  }
+  if (key === 'esp32') {
+    return `Agora: ${s.estado} · ${s.ip} · RSSI ${s.rssi} dBm · heap ${s.heap_livre} B.`;
+  }
+  return '';
+}
+
+function textoDoCartao(key) {
+  const info = COMPONENTS[key];
+  if (!info) return '';
+  const extra = detalheAoVivo(key);
+  return extra ? `${info.text} ${extra}` : info.text;
+}
+
+function atualizarCartaoAoVivo() {
+  const key = state.activeComponent;
+  if (!key || rejectDoor.statusVisible) return;
+  ui.cardText.textContent = textoDoCartao(key);
+}
+
+function atualizarSelo() {
+  if (esp32.mensagemErro && performance.now() < esp32.erroAte) {
+    ui.statusChip.classList.remove('is-running', 'is-live');
+    ui.statusChip.classList.add('is-error');
+    ui.statusText.textContent = esp32.mensagemErro;
+    return;
+  }
+
+  esp32.mensagemErro = '';
+  ui.statusChip.classList.remove('is-error');
+
+  if (state.simulationRunning) {
+    ui.statusChip.classList.add('is-running');
+    ui.statusChip.classList.remove('is-live');
+    ui.statusText.textContent = 'Simulação visual em andamento';
+  } else if (esp32.aoVivo) {
+    ui.statusChip.classList.add('is-live');
+    ui.statusChip.classList.remove('is-running');
+    const ip = esp32.status && esp32.status.ip ? ` · ${esp32.status.ip}` : '';
+    ui.statusText.textContent = `ESP32 ao vivo${ip}`;
+  } else {
+    ui.statusChip.classList.remove('is-running', 'is-live');
+    ui.statusText.textContent = 'Sem conexão com o ESP32 · modo simulação';
+  }
+
+  ui.doorButtons.forEach((botao) => { botao.disabled = !esp32.aoVivo; });
+  ui.simulateButtons.forEach((botao) => { botao.disabled = state.simulationRunning || esp32.aoVivo; });
+}
+
+function mostrarErro(mensagem) {
+  esp32.mensagemErro = mensagem;
+  esp32.erroAte = performance.now() + 4000;
+  atualizarSelo();
+  setTimeout(atualizarSelo, 4100);
+}
+
+function entrarModoAoVivo() {
+  esp32.aoVivo = true;
+  esp32.ultimaTela = '';
+  rejectDoor.items.clear();
+  rejectDoor.detecting = false;
+}
+
+function sairModoAoVivo() {
+  esp32.aoVivo = false;
+  esp32.status = null;
+  esp32.sensor = null;
+  esp32.portaAberta = false;
+  esp32.ultimaTela = '';
+  esp32.origem = '';
+  state.sensor2Result = 0;
+  state.ringBoost = 0;
+  parts.tray.rotation.z = 0;
+  setOledState('aguardando');
+  markFlow(null);
+  atualizarSelo();
+}
+
+function aplicarEstadoReal(status, sensor) {
+  esp32.portaAberta = status.porta === 'aberta';
+  parts.tray.rotation.z = inclinacaoReal(status.servo_separacao);
+
+  const presente = sensor.objeto_presente === true;
+
+  // O indutivo so diz algo util quando ha objeto: em repouso o pino fica em
+  // HIGH e "nao e metal" seria enganoso, entao deixamos o LED neutro.
+  state.sensor2Result = presente ? (sensor.metal_detectado ? 1 : -1) : 0;
+
+  if (presente) {
+    state.sensor1Flash = 1;
+    state.sensor2Scan = 1;
+    state.ringBoost = 1;
+  } else {
+    state.ringBoost = 0;
+  }
+
+  if (status.estado === 'Separando nao-metal' || status.estado === 'Porta aberta') {
+    state.ringAlert = 1;
+  }
+
+  const tela = TELA_POR_ESTADO[status.estado] || 'aguardando';
+  const assinatura = tela === 'pesagem' ? `pesagem:${Number(sensor.peso_g).toFixed(1)}` : tela;
+  if (assinatura !== esp32.ultimaTela) {
+    esp32.ultimaTela = assinatura;
+    setOledState(tela, { peso: Number(sensor.peso_g) });
+  }
+
+  const etapa = status.estado === 'Aguardando objeto' && presente
+    ? 'sensor1'
+    : (ETAPA_POR_ESTADO[status.estado] || null);
+  markFlow(etapa);
+
+  atualizarCartaoAoVivo();
+  atualizarSelo();
+}
+
+// Caminho unico de sucesso, venha o estado do polling proprio ou do pai.
+function registrarEstado(status, sensor, origem) {
+  esp32.falhas = 0;
+
+  // Se uma simulacao local estiver rodando, ela e dona da cena.
+  // Entramos ao vivo na proxima atualizacao, ja com a cena livre.
+  if (state.simulationRunning) return;
+
+  esp32.status = status;
+  esp32.sensor = sensor || esp32.sensor;
+  esp32.origem = origem;
+  if (!esp32.aoVivo) entrarModoAoVivo();
+  aplicarEstadoReal(status, esp32.sensor);
+}
+
+// Caminho unico de falha. So caimos para simulacao depois de FALHAS_ATE_SIMULACAO
+// seguidas: uma falha isolada acontece quando a pesagem bloqueia o loop.
+function registrarFalha() {
+  esp32.falhas += 1;
+  if (esp32.aoVivo && esp32.falhas >= FALHAS_ATE_SIMULACAO) sairModoAoVivo();
+}
+
+async function consultarEsp32() {
+  if (esp32.consultando) return;
+  esp32.consultando = true;
+  try {
+    // Em sequencia, nao em paralelo: o WebServer do ESP32 atende uma
+    // conexao por vez, e dois sockets simultaneos so criam disputa.
+    const status = await buscarJson('/status');
+    const sensor = await buscarJson('/sensor');
+    registrarEstado(status, sensor, 'estado do ESP32');
+  } catch (erro) {
+    registrarFalha();
+  } finally {
+    esp32.consultando = false;
+  }
+}
+
+function iniciarConsultas() {
+  const proxima = async () => {
+    await consultarEsp32();
+    setTimeout(proxima, INTERVALO_CONSULTA_MS);
+  };
+  proxima();
+}
+
+// Mensagens vindas da pagina de controle: pelo iframe (postMessage) e pelo
+// BroadcastChannel, que alcanca o 3D aberto em outra aba.
+function tratarMensagem(dados) {
+  if (!dados || dados.tipo !== CANAL_SINCRONIA) return;
+  if (dados.erro) {
+    registrarFalha();
+    return;
+  }
+  if (!dados.status) return;
+  registrarEstado(dados.status, dados.sensor, dados.origem || 'estado do ESP32');
+}
+
+function ouvirSincronia() {
+  window.addEventListener('message', (evento) => {
+    if (evento.source !== window.parent) return;
+    tratarMensagem(evento.data);
+  });
+
+  if ('BroadcastChannel' in window) {
+    const canal = new BroadcastChannel(CANAL_SINCRONIA);
+    canal.addEventListener('message', (evento) => tratarMensagem(evento.data));
+  }
+}
+
+async function comandarPortinha(estado) {
+  if (!esp32.aoVivo) return;
+  try {
+    const resposta = await buscarJson(`/atuador?estado=${estado}`);
+    if (!resposta.ok) throw new Error(resposta.erro || 'comando recusado');
+    esp32.portaAberta = resposta.estado === 'aberta';
+    await consultarEsp32();
+  } catch (erro) {
+    mostrarErro('Falha ao comandar a portinha');
+  }
+}
+
 function startLoop() {
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
@@ -2414,9 +2738,18 @@ async function init() {
   buildDevice();
   setupInteraction();
   startLoop();
+  ui.doorButtons.forEach((botao) => {
+    botao.addEventListener('click', () => comandarPortinha(botao.dataset.atuador));
+  });
+  atualizarSelo();
+  ouvirSincronia();
+  if (!EMBUTIDO) iniciarConsultas();
   window.descarteAqui = {
     setViewMode, focusComponent, setOledState, simulateDisposal, simulateRejectedObject, resetCamera,
-    getRejectDoorState: () => ({ detecting: rejectDoor.detecting, angle: rejectDoor.angle, target: rejectDoor.target, open: rejectDoor.angle >= DOOR.openAngle - 0.001 })
+    comandarPortinha,
+    aplicarEstadoReal: (status, sensor) => registrarEstado(status, sensor, 'estado do ESP32'),
+    getRejectDoorState: () => ({ detecting: rejectDoor.detecting, angle: rejectDoor.angle, target: rejectDoor.target, open: rejectDoor.angle >= DOOR.openAngle - 0.001 }),
+    getEsp32State: () => ({ aoVivo: esp32.aoVivo, falhas: esp32.falhas, status: esp32.status, sensor: esp32.sensor, origem: esp32.origem, embutido: EMBUTIDO })
   };
   ui.loader.classList.add('is-hidden');
   drawBrandMark();

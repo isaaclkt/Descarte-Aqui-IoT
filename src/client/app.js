@@ -56,7 +56,11 @@ function formatarUptime(segundos) {
   return h + "h " + m + "m " + s + "s";
 }
 
+let ultimoStatus = null;
+let ultimoSensor = null;
+
 function aplicarStatus(status) {
+  ultimoStatus = status;
   el("ip-esp32").textContent = status.ip;
 
   // modo_rede: "STA" = entrou numa rede existente
@@ -71,6 +75,7 @@ function aplicarStatus(status) {
 }
 
 function aplicarSensor(sensor) {
+  ultimoSensor = sensor;
   el("distancia").textContent =
     sensor.distancia_cm < 0 ? "sem eco" : sensor.distancia_cm.toFixed(1);
 
@@ -105,11 +110,69 @@ async function atualizar() {
     aplicarSensor(sensor);
     marcarConectado(true);
     marcarHorario();
+    avisarModelo3d(status, sensor, "estado do ESP32");
   } catch (erro) {
     console.log("Falha ao consultar o ESP32:", erro.message);
     marcarConectado(false);
+    avisarFalha3d();
   }
 }
+
+// ---------------------------------------------------------------
+// Sincronia com o modelo 3D
+//
+// O 3D embutido nao consulta o ESP32 por conta propria: quem consulta e
+// esta pagina, que repassa o estado. Assim o WebServer da placa, que atende
+// uma conexao por vez, continua com um unico cliente consultando.
+// O BroadcastChannel alcanca tambem o 3D aberto em outra aba.
+// ---------------------------------------------------------------
+
+const CANAL_SINCRONIA = "descarte-aqui";
+
+const canal3d = "BroadcastChannel" in window ? new BroadcastChannel(CANAL_SINCRONIA) : null;
+
+function enviar3d(mensagem) {
+  const quadro = el("iframe-3d");
+  if (quadro && quadro.contentWindow) {
+    quadro.contentWindow.postMessage(mensagem, window.location.origin);
+  }
+  if (canal3d) canal3d.postMessage(mensagem);
+}
+
+function avisarModelo3d(status, sensor, origem) {
+  enviar3d({ tipo: CANAL_SINCRONIA, status, sensor, origem });
+}
+
+function avisarFalha3d() {
+  enviar3d({ tipo: CANAL_SINCRONIA, erro: true });
+}
+
+// ---------------------------------------------------------------
+// Carga sob demanda do 3D
+// ---------------------------------------------------------------
+
+function carregar3d() {
+  const moldura = el("moldura-3d");
+  if (moldura.classList.contains("is-carregado")) return;
+
+  const quadro = document.createElement("iframe");
+  quadro.id = "iframe-3d";
+  quadro.src = "/3d?embed=1";
+  quadro.title = "Modelo 3D do ponto de coleta";
+  quadro.loading = "lazy";
+
+  moldura.innerHTML = "";
+  moldura.classList.add("is-carregado");
+  moldura.appendChild(quadro);
+
+  // Assim que o 3D terminar de carregar, mandamos o estado que ja temos
+  // para ele nao ficar esperando o proximo ciclo de consulta.
+  quadro.addEventListener("load", () => {
+    if (ultimoStatus) avisarModelo3d(ultimoStatus, ultimoSensor, "estado do ESP32");
+  });
+}
+
+el("btn-carregar-3d").addEventListener("click", carregar3d);
 
 // ---------------------------------------------------------------
 // Envio de comandos para o atuador
@@ -117,15 +180,32 @@ async function atualizar() {
 
 async function enviarComando(estado) {
   const retorno = el("retorno-comando");
+  const botoes = [el("btn-abrir"), el("btn-fechar")];
+
+  // Trava os dois botoes enquanto o comando esta em andamento, para nao
+  // acumular cliques enquanto a placa ainda nao respondeu.
+  botoes.forEach((botao) => { botao.disabled = true; });
 
   try {
     const resposta = await buscarJson("/atuador?estado=" + estado);
+
+    // So avisamos o 3D depois do ok do ESP32. Se a placa recusar ou nao
+    // responder, o modelo nao se mexe.
+    if (!resposta.ok) throw new Error(resposta.erro || "comando recusado");
+
     retorno.className = "retorno";
     retorno.textContent = "Comando aceito. Porta agora: " + resposta.estado;
-    atualizar();
+
+    if (ultimoStatus) {
+      avisarModelo3d({ ...ultimoStatus, porta: resposta.estado }, ultimoSensor, "comando da página");
+    }
+
+    await atualizar();
   } catch (erro) {
     retorno.className = "retorno erro";
     retorno.textContent = "Falha ao enviar o comando: " + erro.message;
+  } finally {
+    botoes.forEach((botao) => { botao.disabled = false; });
   }
 }
 
