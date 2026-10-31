@@ -71,6 +71,12 @@ HX711 balanca;
 #define ECHO_PIN 18
 #define DISTANCIA_DETECCAO 5     // cm - abaixo disso consideramos que ha objeto
 
+// Ultrassonico 2: verifica objeto no compartimento de nao-metal
+#define TRIG_PIN_2 27
+#define ECHO_PIN_2 33
+#define DISTANCIA_DETECCAO_2 5  // cm; ajustar conforme a posicao fisica
+#define CONFIRMACAO_RETIRADA_MS 800
+
 // Sensor indutivo de metal (LOW = metal detectado)
 #define SENSOR_METAL 32
 
@@ -92,7 +98,6 @@ Servo servoPorta;
 
 // Tempos do ciclo de separacao
 #define TEMPO_ESPERA 4000
-#define TEMPO_PORTA_ABERTA 5000
 #define TEMPO_ESTABILIZACAO 3000
 
 /* =====================================================================
@@ -106,6 +111,9 @@ const char *FIRMWARE = "0.1.0";
 // Leituras dos sensores
 float distanciaCm = -1;
 bool  objetoPresente = false;
+float distanciaNaoMetalCm = -1;
+bool  objetoNaoMetalPresente = false;
+bool  controleAutomaticoPorta = false;
 bool  metalDetectado = false;
 long  pesoBruto = 0;
 float pesoGramas = 0;
@@ -180,6 +188,76 @@ float medirDistancia() {
   }
 
   return duracao * 0.0343 / 2;       // velocidade do som, ida e volta
+}
+
+void definirPorta(bool abrir);
+
+// Mede o segundo ultrassonico, sem disparar os dois ao mesmo tempo.
+float medirDistanciaNaoMetal() {
+  digitalWrite(TRIG_PIN_2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN_2, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN_2, LOW);
+  long duracao = pulseIn(ECHO_PIN_2, HIGH, 30000);
+  if (duracao == 0) return -1;
+  return duracao * 0.0343 / 2;
+}
+
+// Atualiza os dados do compartimento para o monitor serial e a rota /sensor.
+void atualizarSensorNaoMetal() {
+  distanciaNaoMetalCm = medirDistanciaNaoMetal();
+  objetoNaoMetalPresente = distanciaNaoMetalCm > 0 &&
+                           distanciaNaoMetalCm <= DISTANCIA_DETECCAO_2;
+  ultimaLeituraMs = millis();
+}
+
+// Espera a chegada ao compartimento e so fecha apos retirada confirmada.
+// Durante a espera, o servidor HTTP continua respondendo.
+void controlarRetiradaNaoMetal() {
+  controleAutomaticoPorta = true;
+  estadoSistema = "Aguardando nao-metal";
+  mostrarOled("DESCARTE AQUI", "Aguardando objeto", "no compartimento", nullptr);
+  Serial.println("[NAO-METAL] Aguardando deteccao pelo ultrassonico 2...");
+
+  // Aguarda a deteccao real (duas leituras consecutivas).
+  int deteccoes = 0;
+  while (deteccoes < 2) {
+    server.handleClient();
+    atualizarSensorNaoMetal();
+    deteccoes = objetoNaoMetalPresente ? deteccoes + 1 : 0;
+    delay(80);
+  }
+
+  estadoSistema = "Retire o objeto";
+  definirPorta(true);
+  mostrarOled("DESCARTE AQUI", "NAO E PILHA", "RETIRE O OBJETO!", "Porta aberta");
+  Serial.println("[NAO-METAL] Porta aberta. Retire o objeto.");
+
+  unsigned long inicioAusencia = 0;
+  while (true) {
+    server.handleClient();
+    atualizarSensorNaoMetal();
+
+    if (objetoNaoMetalPresente) {
+      inicioAusencia = 0;
+    } else if (distanciaNaoMetalCm > 0) {
+      // Uma distancia valida acima do limite indica ausencia.
+      if (inicioAusencia == 0) inicioAusencia = millis();
+      if (millis() - inicioAusencia >= CONFIRMACAO_RETIRADA_MS) break;
+    } else {
+      // Sem eco: leitura inconclusiva. Por seguranca, nao fecha a porta.
+      inicioAusencia = 0;
+    }
+    delay(80);
+  }
+
+  definirPorta(false);
+  controleAutomaticoPorta = false;
+  estadoSistema = "Objeto retirado";
+  mostrarOled("DESCARTE AQUI", "Objeto retirado!", "Porta fechada", nullptr);
+  Serial.println("[NAO-METAL] Objeto retirado. Porta fechada.");
+  aguardar(1000);
 }
 
 // Move o servo da portinha e atualiza o estado publicado pelas rotas.
@@ -277,6 +355,12 @@ String jsonSensor() {
   j += ",\"objeto_presente\":";
   j += objetoPresente ? "true" : "false";
 
+  j += ",\"distancia_nao_metal_cm\":";
+  j += String(distanciaNaoMetalCm, 1);
+
+  j += ",\"objeto_nao_metal_presente\":";
+  j += objetoNaoMetalPresente ? "true" : "false";
+
   j += ",\"metal_detectado\":";
   j += metalDetectado ? "true" : "false";
 
@@ -354,6 +438,11 @@ void rotaAtuador() {
 
   if (!server.hasArg("estado")) {
     enviarJson(400, "{\"ok\":false,\"erro\":\"faltou o parametro estado (on ou off)\"}");
+    return;
+  }
+
+  if (controleAutomaticoPorta) {
+    enviarJson(409, "{\"ok\":false,\"erro\":\"porta sob controle automatico da retirada\"}");
     return;
   }
 
@@ -454,6 +543,11 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(TRIG_PIN, LOW);
 
+  // ---------- Ultrassonico 2 ----------
+  pinMode(TRIG_PIN_2, OUTPUT);
+  pinMode(ECHO_PIN_2, INPUT);
+  digitalWrite(TRIG_PIN_2, LOW);
+
   // ---------- Sensor indutivo ----------
   pinMode(SENSOR_METAL, INPUT_PULLUP);
 
@@ -505,6 +599,7 @@ void loop() {
   }
   // ---------- Leitura dos sensores ----------
   distanciaCm = medirDistancia();
+  atualizarSensorNaoMetal();
   metalDetectado = (digitalRead(SENSOR_METAL) == LOW);
   objetoPresente = (distanciaCm > 0 && distanciaCm <= DISTANCIA_DETECCAO);
   atualizarPeso();
@@ -552,13 +647,9 @@ void loop() {
       mostrarOled("DESCARTE AQUI", "Objeto detectado!", "NAO E PILHA", "Separando...");
       aguardar(TEMPO_ESPERA);
 
-      // Abre a portinha para o usuario retirar o objeto
-      estadoSistema = "Porta aberta";
-      mostrarOled("NAO PILHA DETECTADO!", "RETIRE O OBJETO!", "Porta aberta!", nullptr);
-      definirPorta(true);
-      aguardar(TEMPO_PORTA_ABERTA);
-      definirPorta(false);
-      aguardar(1000);
+      // A porta so abre quando o ultrassonico 2 detectar o objeto.
+      // Ela permanece aberta ate a retirada ser confirmada.
+      controlarRetiradaNaoMetal();
 
       definirSeparacao(SERVO_INICIAL);
       aguardar(1000);
