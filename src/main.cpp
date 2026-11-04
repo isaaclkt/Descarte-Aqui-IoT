@@ -83,6 +83,25 @@ HX711 balanca;
 #define ECHO_PIN 18
 #define DISTANCIA_DETECCAO 5     // cm - abaixo disso consideramos que ha objeto
 
+// Ultrassonico 2: verifica objeto no compartimento de nao-metal
+#define TRIG_PIN_2 27
+#define ECHO_PIN_2 33
+#define DISTANCIA_DETECCAO_2 5  // cm; ajustar conforme a posicao fisica
+#define CONFIRMACAO_RETIRADA_MS 800
+
+// Limites de tempo das duas esperas do caminho nao-metal.
+//
+// Sem eles os dois lacos de controlarRetiradaNaoMetal() nao tem saida: se o
+// objeto nao parar na frente do ultrassonico 2, ou se o sensor parar de
+// devolver eco, o ciclo nunca termina. O servidor HTTP continua respondendo
+// (os lacos chamam server.handleClient()), mas a maquina nao aceita outro
+// objeto e /atuador responde 409, entao nem pela rede da para fechar a porta.
+//
+// Estourar o prazo nao e falha grave: registra WARN, deixa tudo num estado
+// seguro e devolve o controle ao ciclo normal.
+#define TIMEOUT_CHEGADA_NAO_METAL_MS 30000   // esperando o objeto chegar
+#define TIMEOUT_PORTA_ABERTA_MS 60000        // esperando o usuario retirar
+
 // Sensor indutivo de metal (LOW = metal detectado)
 #define SENSOR_METAL 32
 
@@ -104,7 +123,6 @@ Servo servoPorta;
 
 // Tempos do ciclo de separacao
 #define TEMPO_ESPERA 4000
-#define TEMPO_PORTA_ABERTA 5000
 #define TEMPO_ESTABILIZACAO 3000
 
 /* =====================================================================
@@ -118,6 +136,9 @@ const char *FIRMWARE = "0.2.0";
 // Leituras dos sensores
 float distanciaCm = -1;
 bool  objetoPresente = false;
+float distanciaNaoMetalCm = -1;
+bool  objetoNaoMetalPresente = false;
+bool  controleAutomaticoPorta = false;
 bool  metalDetectado = false;
 long  pesoBruto = 0;
 float pesoGramas = 0;
@@ -196,6 +217,122 @@ float medirDistancia() {
   }
 
   return duracao * 0.0343 / 2;       // velocidade do som, ida e volta
+}
+
+void definirPorta(bool abrir);
+
+// Mede o segundo ultrassonico, sem disparar os dois ao mesmo tempo.
+float medirDistanciaNaoMetal() {
+  digitalWrite(TRIG_PIN_2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN_2, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN_2, LOW);
+  long duracao = pulseIn(ECHO_PIN_2, HIGH, 30000);
+  if (duracao == 0) return -1;
+  return duracao * 0.0343 / 2;
+}
+
+// Atualiza os dados do compartimento para o monitor serial e a rota /sensor.
+void atualizarSensorNaoMetal() {
+  distanciaNaoMetalCm = medirDistanciaNaoMetal();
+  objetoNaoMetalPresente = distanciaNaoMetalCm > 0 &&
+                           distanciaNaoMetalCm <= DISTANCIA_DETECCAO_2;
+  ultimaLeituraMs = millis();
+}
+
+// Espera a chegada ao compartimento e so fecha apos retirada confirmada.
+// Durante a espera, o servidor HTTP continua respondendo.
+//
+// Devolve true quando a retirada foi confirmada pelo sensor, e false quando
+// alguma das duas esperas estourou o prazo. Quem chama usa isso para contar
+// ao backend o que realmente aconteceu.
+bool controlarRetiradaNaoMetal() {
+  controleAutomaticoPorta = true;
+  estadoSistema = "Aguardando nao-metal";
+  mostrarOled("DESCARTE AQUI", "Aguardando objeto", "no compartimento", nullptr);
+  registrar(LOG_INFO, "NAO-METAL", "Aguardando deteccao pelo ultrassonico 2 (GPIO %d).", ECHO_PIN_2);
+
+  // Aguarda a deteccao real (duas leituras consecutivas).
+  int deteccoes = 0;
+  unsigned long inicioEspera = millis();
+
+  while (deteccoes < 2) {
+    if (millis() - inicioEspera >= TIMEOUT_CHEGADA_NAO_METAL_MS) {
+      // O objeto nao chegou ao compartimento. Nem abrimos a porta: nao ha o
+      // que retirar. Devolve o controle para o ciclo seguir normalmente.
+      controleAutomaticoPorta = false;
+      estadoSistema = "Aguardando objeto";
+      mostrarOled("DESCARTE AQUI", "Objeto nao chegou", "ao compartimento", nullptr);
+      registrar(LOG_WARN, "NAO-METAL",
+                "Objeto nao detectado em %d s; seguindo sem abrir a porta.",
+                TIMEOUT_CHEGADA_NAO_METAL_MS / 1000);
+      return false;
+    }
+
+    server.handleClient();
+    atualizarSensorNaoMetal();
+    deteccoes = objetoNaoMetalPresente ? deteccoes + 1 : 0;
+    delay(80);
+  }
+
+  estadoSistema = "Retire o objeto";
+  definirPorta(true);
+  mostrarOled("DESCARTE AQUI", "NAO E PILHA", "RETIRE O OBJETO!", "Porta aberta");
+  registrar(LOG_INFO, "NAO-METAL", "Porta aberta a %.1f cm. Retire o objeto.", (double) distanciaNaoMetalCm);
+
+  // Telemetria para o backend: a porta abriu de verdade, agora. Nao bloqueia,
+  // so enfileira para a task do core 0; sem sessao autorizada, nao faz nada.
+  nuvemAvisarEtapa("porta_aberta", distanciaNaoMetalCm, false, pesoGramas);
+
+  unsigned long inicioAusencia = 0;
+  unsigned long inicioPortaAberta = millis();
+  bool retiradaConfirmada = false;
+
+  while (true) {
+    if (millis() - inicioPortaAberta >= TIMEOUT_PORTA_ABERTA_MS) {
+      // Ou o objeto continua la, ou o sensor parou de responder. De um jeito
+      // ou de outro, a porta nao pode ficar aberta para sempre.
+      break;
+    }
+
+    server.handleClient();
+    atualizarSensorNaoMetal();
+
+    if (objetoNaoMetalPresente) {
+      inicioAusencia = 0;
+    } else if (distanciaNaoMetalCm > 0) {
+      // Uma distancia valida acima do limite indica ausencia.
+      if (inicioAusencia == 0) inicioAusencia = millis();
+      if (millis() - inicioAusencia >= CONFIRMACAO_RETIRADA_MS) {
+        retiradaConfirmada = true;
+        break;
+      }
+    } else {
+      // Sem eco: leitura inconclusiva. Por seguranca, nao fecha a porta -
+      // quem encerra a espera nesse caso e o TIMEOUT_PORTA_ABERTA_MS.
+      inicioAusencia = 0;
+    }
+    delay(80);
+  }
+
+  definirPorta(false);
+  controleAutomaticoPorta = false;
+
+  if (retiradaConfirmada) {
+    estadoSistema = "Objeto retirado";
+    mostrarOled("DESCARTE AQUI", "Objeto retirado!", "Porta fechada", nullptr);
+    registrar(LOG_INFO, "NAO-METAL", "Objeto retirado. Porta fechada.");
+  } else {
+    estadoSistema = "Retirada nao confirmada";
+    mostrarOled("DESCARTE AQUI", "Tempo esgotado", "Porta fechada", nullptr);
+    registrar(LOG_WARN, "NAO-METAL",
+              "Retirada nao confirmada em %d s; porta fechada por seguranca.",
+              TIMEOUT_PORTA_ABERTA_MS / 1000);
+  }
+
+  aguardar(1000);
+  return retiradaConfirmada;
 }
 
 // Move o servo da portinha e atualiza o estado publicado pelas rotas.
@@ -394,6 +531,12 @@ String jsonSensor() {
   j += ",\"objeto_presente\":";
   j += objetoPresente ? "true" : "false";
 
+  j += ",\"distancia_nao_metal_cm\":";
+  j += String(distanciaNaoMetalCm, 1);
+
+  j += ",\"objeto_nao_metal_presente\":";
+  j += objetoNaoMetalPresente ? "true" : "false";
+
   j += ",\"metal_detectado\":";
   j += metalDetectado ? "true" : "false";
 
@@ -475,6 +618,11 @@ void rotaAtuador() {
 
   if (!server.hasArg("estado")) {
     enviarJson(400, "{\"ok\":false,\"erro\":\"faltou o parametro estado (on ou off)\"}");
+    return;
+  }
+
+  if (controleAutomaticoPorta) {
+    enviarJson(409, "{\"ok\":false,\"erro\":\"porta sob controle automatico da retirada\"}");
     return;
   }
 
@@ -604,6 +752,11 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(TRIG_PIN, LOW);
 
+  // ---------- Ultrassonico 2 ----------
+  pinMode(TRIG_PIN_2, OUTPUT);
+  pinMode(ECHO_PIN_2, INPUT);
+  digitalWrite(TRIG_PIN_2, LOW);
+
   // ---------- Sensor indutivo ----------
   pinMode(SENSOR_METAL, INPUT_PULLUP);
 
@@ -668,6 +821,7 @@ void loop() {
   }
   // ---------- Leitura dos sensores ----------
   distanciaCm = medirDistancia();
+  atualizarSensorNaoMetal();
   metalDetectado = (digitalRead(SENSOR_METAL) == LOW);
   objetoPresente = (distanciaCm > 0 && distanciaCm <= DISTANCIA_DETECCAO);
   atualizarPeso();
@@ -732,20 +886,24 @@ void loop() {
       nuvemAvisarEtapa("separando", distanciaCm, false, pesoGramas);
       aguardar(TEMPO_ESPERA);
 
-      // Abre a portinha para o usuario retirar o objeto
-      estadoSistema = "Porta aberta";
-      mostrarOled("NAO PILHA DETECTADO!", "RETIRE O OBJETO!", "Porta aberta!", nullptr);
-      definirPorta(true);
-      nuvemAvisarEtapa("porta_aberta", distanciaCm, false, pesoGramas);
-      aguardar(TEMPO_PORTA_ABERTA);
-      definirPorta(false);
-      aguardar(1000);
+      // A porta so abre quando o ultrassonico 2 detectar o objeto.
+      // Ela permanece aberta ate a retirada ser confirmada.
+      //
+      // Isto substitui o antigo tempo fixo de TEMPO_PORTA_ABERTA (5 s). A
+      // telemetria de "porta_aberta" foi movida para dentro da funcao, no
+      // instante em que a porta realmente abre: aqui ela seria enviada antes
+      // de o objeto sequer chegar ao compartimento.
+      const bool retirado = controlarRetiradaNaoMetal();
 
       definirSeparacao(SERVO_INICIAL);
 
       // Nao-metal encerra a sessao sem pontos: o backend marca "recusada" e a
       // pagina do usuario explica que o material nao e pilha.
-      nuvemConcluir(0, false, "nao e pilha");
+      //
+      // O ciclo termina mesmo quando a retirada nao e confirmada, entao o
+      // usuario recebe a resposta na hora em vez de esperar a sessao expirar.
+      // O texto diferencia os dois casos no log do backend.
+      nuvemConcluir(0, false, retirado ? "nao e pilha" : "nao e pilha, sem retirada");
 
       aguardar(1000);
     }

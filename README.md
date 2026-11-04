@@ -40,10 +40,11 @@ devolvidos ao usuário por uma portinha.
 |           Leitura           |              |      Acionamento        |
 |              v              |              v                          |
 |  +------------------------+ |   +-------------------------------+     |
-|  | HC-SR04  (distancia)   | |   | Servo separacao  (GPIO 25)    |     |
-|  | Sensor indutivo (metal)| |   | Servo porta      (GPIO 26)    |     |
-|  | HX711 + celula (peso)  | |   | Display OLED SSD1306 (I2C)    |     |
-|  +------------------------+ |   +-------------------------------+     |
+|  | HC-SR04 1 (entrada)    | |   | Servo separacao  (GPIO 25)    |     |
+|  | HC-SR04 2 (nao-metal)  | |   | Servo porta      (GPIO 26)    |     |
+|  | Sensor indutivo (metal)| |   | Display OLED SSD1306 (I2C)    |     |
+|  | HX711 + celula (peso)  | |   +-------------------------------+     |
+|  +------------------------+ |                                         |
 +-----------------------------------------------------------------------+
 ```
 
@@ -75,7 +76,8 @@ Placa: **ESP32 DevKit v1 (ESP32-WROOM-32)** — ambiente `esp32doit-devkit-v1`.
 
 | Componente | Função | Pinos no ESP32 |
 |---|---|---|
-| HC-SR04 (ultrassônico) | Detecta objeto a até 5 cm | TRIG = 19, ECHO = 18 |
+| HC-SR04 (ultrassônico 1) | Detecta objeto na entrada, a até 5 cm | TRIG = 19, ECHO = 18 |
+| HC-SR04 (ultrassônico 2) | Detecta o objeto no compartimento do não-metal | TRIG = 27, ECHO = 33 |
 | Sensor indutivo de metal | Distingue pilha de não-pilha | GPIO 32 (`LOW` = metal) |
 | HX711 + célula de carga | Pesa o objeto | DT = 16, SCK = 4 |
 | Servo de separação | Desvia o objeto para o lado correto | GPIO 25 |
@@ -185,6 +187,8 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 {
   "distancia_cm": 12.4,
   "objeto_presente": false,
+  "distancia_nao_metal_cm": 9.8,
+  "objeto_nao_metal_presente": false,
   "metal_detectado": false,
   "peso_bruto": 83472,
   "peso_g": 15.3,
@@ -193,7 +197,23 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 }
 ```
 
-`distancia_cm` vale `-1.0` quando o HC-SR04 não recebe eco dentro de 30 ms.
+`distancia_cm` vale `-1.0` quando o HC-SR04 não recebe eco dentro de 30 ms — o
+mesmo vale para `distancia_nao_metal_cm`.
+
+`distancia_nao_metal_cm` e `objeto_nao_metal_presente` vêm do **segundo
+ultrassônico** (TRIG 27 / ECHO 33), que fica no compartimento do não-metal: é
+ele que manda abrir a portinha quando o objeto chega e fechá-la só depois que a
+retirada é confirmada. Enquanto esse controle automático está ativo,
+`/atuador` responde `409` — a portinha não aceita comando manual no meio da
+retirada.
+
+As duas esperas têm prazo (`TIMEOUT_CHEGADA_NAO_METAL_MS`, 30 s, e
+`TIMEOUT_PORTA_ABERTA_MS`, 60 s). Sem eles o ciclo nunca terminaria quando o
+objeto não parasse na frente do sensor 2, ou quando o sensor deixasse de
+devolver eco: a máquina não aceitaria outro objeto e, com o `409` acima, nem
+pela rede daria para fechar a portinha. Ao estourar, o firmware registra `WARN`
+em `/logs`, fecha a portinha e devolve o controle ao ciclo normal.
+
 `peso_bruto` é a leitura crua do HX711 (usada para calibrar) e `peso_g` é o
 valor convertido em gramas.
 

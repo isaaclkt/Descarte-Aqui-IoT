@@ -26,7 +26,7 @@ lado.
  │  pilhas / dispositivo /  │                  │                              │
  │  sessao_descarte         │                  └──────────────┬───────────────┘
  └──────────────────────────┘                                 │
-                                                  HC-SR04 · sensor indutivo
+                                                  2× HC-SR04 · sensor indutivo
                                                   HX711 · 2 servos · OLED
 ```
 
@@ -93,7 +93,7 @@ e inviabilizaria a demonstração numa máquina sem o site publicado.
 | 9 | ESP32 | mostra no OLED e em `/descarte`; estado `AUTORIZADO` |
 | 10 | físico | usuário coloca a pilha; HC-SR04 detecta |
 | 11 | ESP32 | `POST evento.php` (`objeto_detectado`) → sessão `em_andamento` |
-| 12 | físico | sensor indutivo classifica, servo separa, HX711 pesa |
+| 12 | físico | sensor indutivo classifica, servo separa, HX711 pesa. Não sendo pilha, o segundo ultrassônico comanda a portinha e a etapa `porta_aberta` é reportada quando ela abre de fato |
 | 13 | ESP32 | `POST concluir.php` com peso, metal e a `chave_conclusao` |
 | 14 | backend | valida tudo (seção 5) e calcula os pontos |
 | 15 | backend | numa transação: grava `descarte` + `descarte_pilha`, credita `usuario.pontos`, fecha a sessão |
@@ -282,6 +282,9 @@ chave de dispositivo ou `chave_conclusao`.
 | reconexão | WARN `WIFI` (com o número da tentativa) | — |
 | sensor acionado | INFO `SENSOR` | INFO `ciclo_*` |
 | servo acionado | INFO `ATUADOR` | — |
+| porta do não-metal aberta | INFO `NAO-METAL` | INFO `ciclo_porta_aberta` |
+| objeto não chegou ao compartimento (30 s) | WARN `NAO-METAL` | — |
+| retirada não confirmada (60 s) | WARN `NAO-METAL` | — |
 | sessão iniciada | INFO `NUVEM` | INFO `sessao_iniciada` |
 | descarte concluído | INFO `NUVEM` | INFO `descarte_concluido` |
 | erro de conexão | WARN/ERROR `NUVEM` | — |
@@ -389,7 +392,10 @@ engessava a tabela de sessões, e uma verificação do próprio script que usava
 Não há placa disponível neste ambiente. Nada abaixo foi simulado nem é
 apresentado como testado:
 
-- leitura real do HC-SR04, do sensor indutivo e da balança HX711;
+- leitura real dos dois HC-SR04, do sensor indutivo e da balança HX711;
+- os dois prazos do caminho não-metal (30 s para o objeto chegar, 60 s para a
+  retirada). A lógica compila e o raciocínio de rollover do `millis()` está
+  correto, mas o comportamento com o sensor real não foi observado;
 - movimento dos dois servos e abertura da portinha;
 - calibração do `FATOR_CALIBRACAO` (ainda em 420.0, valor não calibrado);
 - comportamento da task do core 0 com Wi-Fi real caindo e voltando;
