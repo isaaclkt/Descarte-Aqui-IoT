@@ -36,6 +36,39 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
       <p id="estado-sistema" class="estado-grande">--</p>
     </section>
 
+    <section class="painel" aria-label="Descarte autorizado pelo site">
+      <h2>Descarte pelo site</h2>
+      <p class="aviso" id="iot-aviso">Consultando a integração...</p>
+
+      <div class="grade grade-iot">
+
+        <article class="cartao">
+          <h3>Sessão</h3>
+          <p class="valor" id="iot-sessao">--</p>
+          <p class="detalhe">Código: <span id="iot-codigo">--</span></p>
+        </article>
+
+        <article class="cartao">
+          <h3>Tipo declarado</h3>
+          <p class="valor" id="iot-pilha">--</p>
+          <p class="detalhe"><span id="iot-ppg">--</span> pontos por grama</p>
+        </article>
+
+        <article class="cartao">
+          <h3>Backend</h3>
+          <p class="valor" id="iot-backend">--</p>
+          <p class="detalhe">Último contato: <span id="iot-contato">--</span></p>
+        </article>
+
+        <article class="cartao">
+          <h3>Último descarte</h3>
+          <p class="valor"><span id="iot-pontos">--</span> pts</p>
+          <p class="detalhe" id="iot-motivo">--</p>
+        </article>
+
+      </div>
+    </section>
+
     <div class="conteudo">
 
     <section class="grade" aria-label="Sensores e atuadores">
@@ -485,6 +518,12 @@ main > *,
   border: 0;
   border-radius: 8px;
 }
+
+/* Grade dentro do painel "Descarte pelo site": a .grade solta usa 24px de
+   margem vertical, que aqui abriria um vao grande logo abaixo do aviso. */
+.grade-iot {
+  margin: 14px 0 0;
+}
 )rawliteral";
 
 // ---------- app.js ----------
@@ -587,6 +626,85 @@ function marcarHorario() {
 }
 
 // ---------------------------------------------------------------
+// Painel "Descarte pelo site" (rota /descarte)
+//
+// Esta parte e so informativa: mostra o que o ESP32 combinou com o backend.
+// Se a integracao estiver desligada ou o backend estiver fora do ar, o
+// painel diz isso e o resto da pagina continua funcionando igual.
+// ---------------------------------------------------------------
+
+const TEXTO_SESSAO = {
+  ocioso: "Sem autorização",
+  autorizada: "Autorizada",
+  em_andamento: "Em andamento",
+  enviando: "Enviando resultado",
+  concluida: "Concluída"
+};
+
+const TEXTO_BACKEND = {
+  ok: "Respondendo",
+  sem_rede: "Sem Wi-Fi",
+  erro_http: "Fora do ar",
+  nao_configurado: "Não configurado"
+};
+
+function aplicarDescarte(d) {
+  el("iot-sessao").textContent = TEXTO_SESSAO[d.sessao_estado] || d.sessao_estado;
+  el("iot-codigo").textContent = d.sessao_parcial ? d.sessao_parcial + "..." : "--";
+  el("iot-pilha").textContent = d.pilha || "--";
+  el("iot-ppg").textContent = d.pontos_por_grama > 0 ? d.pontos_por_grama : "--";
+  el("iot-backend").textContent = TEXTO_BACKEND[d.backend_estado] || d.backend_estado;
+
+  el("iot-contato").textContent =
+    d.backend_ultimo_contato_s < 0 ? "nunca" : d.backend_ultimo_contato_s + " s atrás";
+
+  el("iot-pontos").textContent = d.ultimo_descarte > 0 ? d.ultimos_pontos : "--";
+
+  const aviso = el("iot-aviso");
+
+  if (!d.backend_configurado) {
+    aviso.className = "aviso";
+    aviso.textContent =
+      "Integração desligada (src/config_backend.h não preenchido). " +
+      "O servidor local, os sensores e o servo funcionam normalmente.";
+    el("iot-motivo").textContent = "--";
+    return;
+  }
+
+  if (d.sessao_estado === "autorizada") {
+    aviso.className = "aviso";
+    aviso.textContent =
+      "Autorizado: " + d.pilha + ". Restam " + d.segundos_restantes + " s para o descarte.";
+  } else if (d.sessao_estado === "em_andamento") {
+    aviso.className = "aviso";
+    aviso.textContent = "Descarte em andamento.";
+  } else if (d.conclusao_pendente) {
+    aviso.className = "aviso";
+    aviso.textContent = "Enviando o resultado ao backend...";
+  } else if (d.sessao_estado === "concluida") {
+    aviso.className = "aviso";
+    aviso.textContent = d.ultimo_creditado
+      ? "Descarte " + d.ultimo_descarte + " registrado: " + d.ultimos_pontos + " pontos."
+      : "Último descarte não pontuou.";
+  } else {
+    aviso.className = "aviso";
+    aviso.textContent = "Nenhuma autorização ativa. Escaneie o QR Code no site para iniciar.";
+  }
+
+  el("iot-motivo").textContent = d.ultimo_motivo || (d.ultimo_creditado ? "Creditado" : "--");
+}
+
+async function atualizarDescarte() {
+  try {
+    aplicarDescarte(await buscarJson("/descarte"));
+  } catch (erro) {
+    // Falha aqui NAO marca a pagina como desconectada: /descarte e um extra.
+    el("iot-aviso").className = "aviso";
+    el("iot-aviso").textContent = "Não foi possível ler o estado do descarte.";
+  }
+}
+
+// ---------------------------------------------------------------
 // Ciclo de consulta: /status + /sensor
 // ---------------------------------------------------------------
 
@@ -602,10 +720,19 @@ async function atualizar() {
     marcarConectado(true);
     marcarHorario();
     avisarModelo3d(status, sensor, "estado do ESP32");
+
+    // Depois do essencial e fora do Promise.all de proposito: se /descarte
+    // falhar, a pagina nao passa a se dizer desconectada.
+    atualizarDescarte();
   } catch (erro) {
     console.log("Falha ao consultar o ESP32:", erro.message);
     marcarConectado(false);
     avisarFalha3d();
+
+    // Sem a placa nao ha o que dizer sobre a sessao de descarte. Sem isto o
+    // painel ficaria preso em "Consultando a integracao..." para sempre.
+    el("iot-aviso").className = "aviso";
+    el("iot-aviso").textContent = "Sem conexão com a placa.";
   }
 }
 

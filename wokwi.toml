@@ -1,0 +1,7 @@
+# Simulacao no Wokwi (extensao do VS Code).
+# Compile antes com o PlatformIO: os arquivos abaixo saem do build.
+
+[wokwi]
+version = 1
+firmware = '.pio/build/esp32doit-devkit-v1/firmware.bin'
+elf = '.pio/build/esp32doit-devkit-v1/firmware.elf'

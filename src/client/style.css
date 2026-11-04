@@ -370,3 +370,9 @@ main > *,
   border: 0;
   border-radius: 8px;
 }
+
+/* Grade dentro do painel "Descarte pelo site": a .grade solta usa 24px de
+   margem vertical, que aqui abriria um vao grande logo abaixo do aviso. */
+.grade-iot {
+  margin: 14px 0 0;
+}

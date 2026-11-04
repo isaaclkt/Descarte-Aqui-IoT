@@ -12,3 +12,7 @@ __pycache__/
 
 # Credenciais de Wi-Fi - nunca versionar
 src/config_wifi.h
+
+# Credenciais do dispositivo na integracao com o backend - nunca versionar
+src/config_backend.h
+backend/config.php

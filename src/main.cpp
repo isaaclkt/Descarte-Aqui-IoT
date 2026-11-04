@@ -7,6 +7,16 @@
    e comanda o atuador sem depender de nenhum servico externo.
 
    Fluxo:   NAVEGADOR  <--HTTP-->  ESP32  <-->  SENSORES / ATUADORES
+
+   A partir da integracao com o site, existe um SEGUNDO fluxo, opcional e
+   independente deste:
+
+            ESP32  --HTTP de saida-->  backend PHP  -->  banco
+
+   Ele roda numa task separada (src/nuvem.cpp, core 0) e serve para creditar
+   pontos ao usuario que escaneou o QR Code. O servidor local continua no
+   core 1 e NAO depende dele: sem internet, sem backend ou sem
+   src/config_backend.h, tudo aqui continua funcionando igual.
    ===================================================================== */
 
 #include <Arduino.h>
@@ -19,6 +29,8 @@
 #include <ESP32Servo.h>
 
 #include "pagina_web.h"   // HTML/CSS/JS embutidos (gerado por tools/gerar_pagina_web.py)
+#include "registro.h"     // log INFO/WARN/ERROR, servido tambem em GET /logs
+#include "nuvem.h"        // cliente do backend PHP (task propria no core 0)
 
 /* =====================================================================
    1) CONFIGURACAO DO WI-FI
@@ -101,7 +113,7 @@ Servo servoPorta;
 
 WebServer server(80);            // servidor HTTP escutando na porta 80
 
-const char *FIRMWARE = "0.1.0";
+const char *FIRMWARE = "0.2.0";
 
 // Leituras dos sensores
 float distanciaCm = -1;
@@ -122,6 +134,10 @@ bool portaAberta = false;
 const char *estadoSistema = "Iniciando";
 
 bool wifiEstavaConectado = false;
+
+// Quantas vezes tentamos reconectar desde que a placa ligou. Vai para /rede:
+// e a prova, na apresentacao, de que a reconexao automatica esta agindo.
+unsigned long tentativasReconexao = 0;
 
 unsigned long ultimaLeituraMs = 0;
 unsigned long ultimaVerificacaoWiFi = 0;
@@ -186,7 +202,7 @@ float medirDistancia() {
 void definirPorta(bool abrir) {
   portaAberta = abrir;
   servoPorta.write(abrir ? PORTA_ABERTA : PORTA_FECHADA);
-  Serial.printf("[ATUADOR] Porta -> %s\n", abrir ? "ABERTA" : "FECHADA");
+  registrar(LOG_INFO, "ATUADOR", "Porta -> %s (GPIO %d).", abrir ? "ABERTA" : "FECHADA", SERVO_PORTA_PIN);
 }
 
 // Move o servo de separacao e guarda a posicao.
@@ -243,6 +259,10 @@ String jsonStatus() {
   j += "\",\"ip\":\"";
   j += enderecoIP();
 
+  // MAC: exigido pelo TDE ("exibicao do IP e MAC do dispositivo").
+  j += "\",\"mac\":\"";
+  j += WiFi.macAddress();
+
   j += "\",\"rssi\":";
   j += WiFi.RSSI();
 
@@ -263,6 +283,103 @@ String jsonStatus() {
 
   j += "\",\"servo_separacao\":";
   j += posicaoServoSeparacao;
+
+  // Integracao com o site. Se o backend estiver fora do ar, estes campos
+  // mudam de valor - e so isso: nada aqui deixa de responder por causa deles.
+  j += ",\"backend_estado\":\"";
+  j += nuvemEstadoBackendTexto();
+
+  j += "\",\"backend_configurado\":";
+  j += nuvemConfigurada() ? "true" : "false";
+
+  j += ",\"backend_ultimo_contato_s\":";
+  j += nuvemSegundosDesdeContato();
+
+  j += ",\"sessao_estado\":\"";
+  j += nuvemEstadoSessaoTexto();
+
+  j += "\"}";
+  return j;
+}
+
+// Estado dos dois servos. O TDE pede um endpoint para "consultar o estado do
+// servo"; /status ja mostra o resumo, aqui vem o detalhe com pinos e limites.
+String jsonServo() {
+  String j = "{\"servos\":[";
+
+  j += "{\"nome\":\"porta\",\"pino\":";
+  j += SERVO_PORTA_PIN;
+  j += ",\"posicao\":";
+  j += portaAberta ? PORTA_ABERTA : PORTA_FECHADA;
+  j += ",\"estado\":\"";
+  j += portaAberta ? "aberta" : "fechada";
+  j += "\",\"minimo\":";
+  j += PORTA_FECHADA;
+  j += ",\"maximo\":";
+  j += PORTA_ABERTA;
+  j += "},";
+
+  j += "{\"nome\":\"separacao\",\"pino\":";
+  j += SERVO_SEPARACAO_PIN;
+  j += ",\"posicao\":";
+  j += posicaoServoSeparacao;
+  j += ",\"estado\":\"";
+  if (posicaoServoSeparacao == SERVO_METAL) {
+    j += "metal";
+  } else if (posicaoServoSeparacao == SERVO_NAO_METAL) {
+    j += "nao_metal";
+  } else {
+    j += "centro";
+  }
+  j += "\",\"minimo\":";
+  j += SERVO_NAO_METAL;
+  j += ",\"maximo\":";
+  j += SERVO_METAL;
+  j += "}";
+
+  j += "]}";
+  return j;
+}
+
+// Informacoes de conexao exigidas pelo TDE, num lugar so.
+String jsonRede() {
+  const bool conectado = (WiFi.status() == WL_CONNECTED);
+
+  String j = "{";
+
+  j += "\"conectado\":";
+  j += conectado ? "true" : "false";
+
+  j += ",\"modo\":\"STA\"";
+
+  j += ",\"ssid\":\"";
+  j += WIFI_SSID;
+
+  j += "\",\"ip\":\"";
+  j += enderecoIP();
+
+  j += "\",\"mac\":\"";
+  j += WiFi.macAddress();
+
+  j += "\",\"gateway\":\"";
+  j += WiFi.gatewayIP().toString();
+
+  j += "\",\"mascara\":\"";
+  j += WiFi.subnetMask().toString();
+
+  j += "\",\"dns\":\"";
+  j += WiFi.dnsIP().toString();
+
+  j += "\",\"rssi\":";
+  j += WiFi.RSSI();
+
+  j += ",\"canal\":";
+  j += WiFi.channel();
+
+  j += ",\"tentativas_reconexao\":";
+  j += tentativasReconexao;
+
+  j += ",\"porta_servidor\":80";
 
   j += "}";
   return j;
@@ -300,6 +417,10 @@ String jsonSensor() {
    6) ROTAS HTTP
    ===================================================================== */
 
+// As requisicoes HTTP ficam SO no Serial, de proposito: a pagina consulta
+// /status e /sensor a cada 2 s e, se isso entrasse no buffer de /logs, em
+// poucos segundos empurraria para fora os eventos que importam (Wi-Fi,
+// sensor, servo, sessao de descarte).
 void registrarRequisicao() {
   Serial.printf("[HTTP] %s %s  (cliente %s)\n",
                 server.method() == HTTP_GET ? "GET" : "OUTRO",
@@ -376,6 +497,30 @@ void rotaAtuador() {
   enviarJson(200, r);
 }
 
+// GET /servo -> estado detalhado dos dois servos
+void rotaServo() {
+  registrarRequisicao();
+  enviarJson(200, jsonServo());
+}
+
+// GET /rede -> informacoes da conexao (IP, MAC, gateway, RSSI...)
+void rotaRede() {
+  registrarRequisicao();
+  enviarJson(200, jsonRede());
+}
+
+// GET /descarte -> estado do descarte autorizado pelo site
+void rotaDescarte() {
+  registrarRequisicao();
+  enviarJson(200, nuvemJson());
+}
+
+// GET /logs -> ultimos eventos registrados (INFO/WARN/ERROR)
+void rotaLogs() {
+  registrarRequisicao();
+  enviarJson(200, registroJson());
+}
+
 void rotaNaoEncontrada() {
   registrarRequisicao();
   enviarJson(404, "{\"ok\":false,\"erro\":\"rota nao encontrada\"}");
@@ -401,7 +546,7 @@ bool conectarWiFi() {
   Serial.println();
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WIFI] Sem conexao. Confira o hotspot 2,4 GHz, nome e senha.");
+    registrar(LOG_ERRO, "WIFI", "Sem conexao. Confira o hotspot 2,4 GHz, nome e senha.");
     Serial.println("[WIFI] Continuaremos tentando conectar ao hotspot.");
     mostrarOled("DESCARTE AQUI", "Sem Wi-Fi", "Ative o hotspot", "2,4 GHz");
     return false;
@@ -410,7 +555,8 @@ bool conectarWiFi() {
   wifiEstavaConectado = true;
   String ip = WiFi.localIP().toString();
 
-  Serial.println("[WIFI] Conectado!");
+  // IP e MAC no log: os dois dados de identificacao que o TDE pede.
+  registrar(LOG_INFO, "WIFI", "Conectado. IP %s, MAC %s.", ip.c_str(), WiFi.macAddress().c_str());
   Serial.print("[WIFI] Acesse no navegador: http://");
   Serial.println(ip);
 
@@ -427,13 +573,17 @@ void setup() {
   delay(500);
   Serial.println("\n\n=== DESCARTE AQUI - iniciando ===");
 
+  // Antes de qualquer registrar(): prepara o mutex do buffer de log.
+  registroIniciar();
+  registrar(LOG_INFO, "SETUP", "Firmware %s iniciando.", FIRMWARE);
+
   // ---------- OLED ----------
   Wire.begin(OLED_SDA, OLED_SCL);
   oledOk = display.begin(SSD1306_SWITCHCAPVCC, OLED_ENDERECO);
   if (!oledOk) {
     // Antes o codigo parava aqui com while(true). Agora seguimos sem display:
     // o servidor HTTP continua funcionando e a interface mostra oled_ok: false.
-    Serial.println("[OLED] Nao encontrado - seguindo sem display.");
+    registrar(LOG_WARN, "OLED", "Nao encontrado - seguindo sem display.");
   }
 
   // ---------- Balanca HX711 ----------
@@ -442,11 +592,11 @@ void setup() {
     balanca.set_scale(FATOR_CALIBRACAO);
     balanca.tare();
     balancaOk = true;
-    Serial.println("[HX711] Pronta e tarada.");
+    registrar(LOG_INFO, "HX711", "Pronta e tarada (fator %.1f).", (double) FATOR_CALIBRACAO);
   } else {
     // wait_ready_timeout evita que tare() trave o ESP32 para sempre
     // caso o HX711 esteja desconectado.
-    Serial.println("[HX711] Nao respondeu - seguindo sem balanca.");
+    registrar(LOG_ERRO, "HX711", "Nao respondeu - seguindo sem balanca.");
   }
 
   // ---------- Ultrassonico ----------
@@ -475,10 +625,19 @@ void setup() {
   server.on("/status", HTTP_GET, rotaStatus);
   server.on("/sensor", HTTP_GET, rotaSensor);
   server.on("/atuador", HTTP_GET, rotaAtuador);
+  server.on("/servo", HTTP_GET, rotaServo);
+  server.on("/rede", HTTP_GET, rotaRede);
+  server.on("/descarte", HTTP_GET, rotaDescarte);
+  server.on("/logs", HTTP_GET, rotaLogs);
   server.onNotFound(rotaNaoEncontrada);
 
   server.begin();
-  Serial.println("[HTTP] Servidor ativo na porta 80.");
+  registrar(LOG_INFO, "HTTP", "Servidor ativo na porta 80.");
+
+  // ---------- Integracao com o backend ----------
+  // Depois do servidor local, de proposito: se a integracao falhar, o
+  // servidor ja esta no ar.
+  nuvemIniciar();
 
   estadoSistema = "Aguardando objeto";
   aguardar(2000);
@@ -493,14 +652,18 @@ void loop() {
   server.handleClient();
   bool wifiConectado = WiFi.status() == WL_CONNECTED;
   if (wifiConectado && !wifiEstavaConectado) {
-    Serial.print("[WIFI] Reconectado! Acesse: http://");
-    Serial.println(enderecoIP());
+    registrar(LOG_INFO, "WIFI", "Reconectado. IP %s, MAC %s.",
+              enderecoIP().c_str(), WiFi.macAddress().c_str());
     mostrarOled("DESCARTE AQUI", "Wi-Fi conectado", enderecoIP().c_str(), nullptr);
+  }
+  if (!wifiConectado && wifiEstavaConectado) {
+    registrar(LOG_WARN, "WIFI", "Conexao perdida; iniciando reconexao automatica.");
   }
   wifiEstavaConectado = wifiConectado;
   if (!wifiConectado && millis() - ultimaVerificacaoWiFi >= INTERVALO_RECONEXAO_MS) {
     ultimaVerificacaoWiFi = millis();
-    Serial.println("[WIFI] Tentando conectar ao hotspot...");
+    tentativasReconexao++;
+    registrar(LOG_WARN, "WIFI", "Tentativa de reconexao numero %lu.", tentativasReconexao);
     WiFi.reconnect();
   }
   // ---------- Leitura dos sensores ----------
@@ -512,16 +675,24 @@ void loop() {
 
   if (objetoPresente) {
 
+    // Avisa o backend do inicio do ciclo. Nao bloqueia: so enfileira para a
+    // task do core 0. Sem sessao autorizada, nao faz nada.
+    registrar(LOG_INFO, "SENSOR", "Objeto detectado a %.1f cm (%s).",
+              (double) distanciaCm, metalDetectado ? "metal" : "nao-metal");
+    nuvemAvisarEtapa("objeto_detectado", distanciaCm, metalDetectado, pesoGramas);
+
     if (metalDetectado) {
       // ---------- Caminho da pilha (metal) ----------
       estadoSistema = "Separando metal";
       definirSeparacao(SERVO_METAL);
       mostrarOled("DESCARTE AQUI", "Objeto detectado!", "PILHA", "Separando...");
+      nuvemAvisarEtapa("separando", distanciaCm, true, pesoGramas);
       aguardar(TEMPO_ESPERA);
 
       // Pesagem
       estadoSistema = "Pesando";
       mostrarOled("DESCARTE AQUI", "METAL DETECTADO!", "Aguardando peso...", nullptr);
+      nuvemAvisarEtapa("pesando", distanciaCm, true, pesoGramas);
       aguardar(TEMPO_ESTABILIZACAO);
 
       if (balancaOk && balanca.wait_ready_timeout(1000)) {
@@ -534,11 +705,19 @@ void loop() {
         char linhaPeso[24];
         snprintf(linhaPeso, sizeof(linhaPeso), "Peso: %.1f g", pesoGramas);
 
-        Serial.printf("[BALANCA] bruto=%ld  peso=%.1f g\n", pesoBruto, pesoGramas);
+        registrar(LOG_INFO, "BALANCA", "Bruto %ld, peso %.1f g.", pesoBruto, (double) pesoGramas);
         mostrarOled("DESCARTE AQUI", "PILHA", linhaPeso, nullptr);
+
+        // Fim do ciclo com material valido: e AQUI que o descarte pode virar
+        // pontos. Quem decide se vira, e quantos, e o backend.
+        nuvemConcluir(pesoGramas, true, "pilha separada");
       } else {
-        Serial.println("[BALANCA] Erro na leitura.");
+        registrar(LOG_ERRO, "BALANCA", "Erro na leitura; sem peso para reportar.");
         mostrarOled("DESCARTE AQUI", "Erro na balanca!", nullptr, nullptr);
+
+        // Sem peso confiavel nao ha pontuacao. Enviamos assim mesmo para que
+        // o usuario receba a recusa na hora, em vez de esperar a expiracao.
+        nuvemConcluir(0, true, "erro na balanca");
       }
 
       aguardar(2000);
@@ -550,17 +729,24 @@ void loop() {
       estadoSistema = "Separando nao-metal";
       definirSeparacao(SERVO_NAO_METAL);
       mostrarOled("DESCARTE AQUI", "Objeto detectado!", "NAO E PILHA", "Separando...");
+      nuvemAvisarEtapa("separando", distanciaCm, false, pesoGramas);
       aguardar(TEMPO_ESPERA);
 
       // Abre a portinha para o usuario retirar o objeto
       estadoSistema = "Porta aberta";
       mostrarOled("NAO PILHA DETECTADO!", "RETIRE O OBJETO!", "Porta aberta!", nullptr);
       definirPorta(true);
+      nuvemAvisarEtapa("porta_aberta", distanciaCm, false, pesoGramas);
       aguardar(TEMPO_PORTA_ABERTA);
       definirPorta(false);
       aguardar(1000);
 
       definirSeparacao(SERVO_INICIAL);
+
+      // Nao-metal encerra a sessao sem pontos: o backend marca "recusada" e a
+      // pagina do usuario explica que o material nao e pilha.
+      nuvemConcluir(0, false, "nao e pilha");
+
       aguardar(1000);
     }
 

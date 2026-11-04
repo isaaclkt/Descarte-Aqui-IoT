@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "author": "Descarte Aqui - PUCPR",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "board-ssd1306",
+      "id": "oled",
+      "top": -160,
+      "left": -20,
+      "attrs": { "i2cAddress": "0x3c" }
+    },
+    {
+      "type": "wokwi-hc-sr04",
+      "id": "ultra",
+      "top": 10,
+      "left": -250,
+      "attrs": { "distance": "30" }
+    },
+    {
+      "type": "wokwi-slide-switch",
+      "id": "metal",
+      "top": 200,
+      "left": -220,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-hx711",
+      "id": "balanca",
+      "top": -20,
+      "left": 220,
+      "attrs": { "type": "5kg" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servoSeparacao",
+      "top": 130,
+      "left": 230,
+      "attrs": { "horn": "double", "hornColor": "#4ade80" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servoPorta",
+      "top": 250,
+      "left": 230,
+      "attrs": { "horn": "single", "hornColor": "#fbbf24" }
+    }
+  ],
+  "connections": [
+    [ "esp:TX0", "$serialMonitor:RX", "", [] ],
+    [ "esp:RX0", "$serialMonitor:TX", "", [] ],
+
+    [ "oled:VCC", "esp:3V3", "red", [] ],
+    [ "oled:GND", "esp:GND.1", "black", [] ],
+    [ "oled:SDA", "esp:D21", "green", [] ],
+    [ "oled:SCL", "esp:D22", "green", [] ],
+
+    [ "ultra:VCC", "esp:VIN", "red", [] ],
+    [ "ultra:GND", "esp:GND.2", "black", [] ],
+    [ "ultra:TRIG", "esp:D19", "blue", [] ],
+    [ "ultra:ECHO", "esp:D18", "blue", [] ],
+
+    [ "metal:2", "esp:D32", "purple", [] ],
+    [ "metal:1", "esp:GND.2", "black", [] ],
+
+    [ "balanca:VCC", "esp:3V3", "red", [] ],
+    [ "balanca:GND", "esp:GND.1", "black", [] ],
+    [ "balanca:DT", "esp:RX2", "orange", [] ],
+    [ "balanca:SCK", "esp:D4", "orange", [] ],
+
+    [ "servoSeparacao:V+", "esp:VIN", "red", [] ],
+    [ "servoSeparacao:GND", "esp:GND.1", "black", [] ],
+    [ "servoSeparacao:PWM", "esp:D25", "gold", [] ],
+
+    [ "servoPorta:V+", "esp:VIN", "red", [] ],
+    [ "servoPorta:GND", "esp:GND.1", "black", [] ],
+    [ "servoPorta:PWM", "esp:D26", "gold", [] ]
+  ]
+}

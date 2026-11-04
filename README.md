@@ -47,8 +47,21 @@ devolvidos ao usuário por uma portinha.
 +-----------------------------------------------------------------------+
 ```
 
-Toda a comunicação acontece **dentro da rede Wi-Fi local**. Não há servidor
-externo, nuvem, banco de dados nem API de terceiros: o ESP32 é o servidor.
+Toda a comunicação **do servidor local** acontece dentro da rede Wi-Fi: o ESP32
+é o servidor, e o navegador da rede fala direto com ele.
+
+Existe ainda um segundo fluxo, **opcional e independente deste**, que liga o
+equipamento ao site Descarte Aqui para creditar pontos ao usuário:
+
+```
+   ESP32  ──requisições DE SAÍDA──▶  backend PHP  ──▶  MySQL
+```
+
+Ele roda numa task separada, no outro núcleo do ESP32, e o servidor local não
+depende dele: sem internet, sem backend ou sem `src/config_backend.h`, tudo
+acima continua funcionando igual. O ESP32 nunca é exposto à internet — nenhuma
+porta é aberta no roteador. Detalhes em
+[`docs/integracao-iot-backend.md`](docs/integracao-iot-backend.md).
 
 A página web não fica num servidor separado — ela viaja **dentro do próprio
 firmware**, como texto na memória de programa (`PROGMEM`). Quando o navegador
@@ -79,14 +92,24 @@ Posições dos servos (constantes no firmware): separação em 90° (repouso),
 ```
 Descarte-Aqui-IoT/
 ├── docs/                      # diagramas, esquemático e fotos da montagem
+│   └── integracao-iot-backend.md  # arquitetura da integração com o site
 ├── src/
 │   ├── main.cpp               # firmware do ESP32 (servidor HTTP + sensores + atuadores)
+│   ├── nuvem.h / nuvem.cpp    # cliente do backend PHP (task própria, core 0)
+│   ├── registro.h / .cpp      # log INFO/WARN/ERROR, servido em GET /logs
+│   ├── config_wifi.exemplo.h  # modelo das credenciais de Wi-Fi
+│   ├── config_backend.exemplo.h   # modelo das credenciais do dispositivo
 │   ├── pagina_web.h           # HTML/CSS/JS embutidos no firmware (GERADO)
 │   └── client/                # fonte da aplicação cliente
 │       ├── index.html
 │       ├── style.css
 │       ├── app.js
 │       └── ponto_coleta3d.html   # visualização 3D (Three.js via CDN)
+├── backend/                   # rotas PHP da integração (publicar como php/iot/ no site)
+│   ├── publico/               # rotas do usuário autenticado
+│   ├── dispositivo/           # rotas que o ESP32 consome
+│   ├── sql/                   # migração do banco
+│   └── ferramentas/           # gerar chave do dispositivo, testar o fluxo
 ├── tools/
 │   └── gerar_pagina_web.py    # gera pagina_web.h a partir de src/client/
 ├── platformio.ini             # dependências e configuração da placa
@@ -125,6 +148,13 @@ testadas direto na barra de endereço do navegador.
 | `/sensor` | Leituras atuais dos sensores | JSON |
 | `/atuador?estado=on` | Abre a portinha | JSON |
 | `/atuador?estado=off` | Fecha a portinha | JSON |
+| `/servo` | Estado dos dois servos (pino, posição, limites) | JSON |
+| `/rede` | IP, MAC, gateway, RSSI, tentativas de reconexão | JSON |
+| `/descarte` | Estado do descarte autorizado pelo site | JSON |
+| `/logs` | Últimos eventos registrados (INFO/WARN/ERROR) | JSON |
+
+As quatro últimas são documentadas em
+[`docs/integracao-iot-backend.md`](docs/integracao-iot-backend.md), seção 3.
 
 ### `GET /status`
 
@@ -459,6 +489,39 @@ Se o OLED ou o HX711 não responderem, o firmware registra o problema, marca
 `oled_ok`/`balanca_ok` como `false` e continua. O servidor HTTP sobe de
 qualquer forma, e a interface mostra qual periférico falhou. Isso evita que um
 cabo solto no display derrube o sistema inteiro no dia da apresentação.
+
+## 9.1 Integração com o site Descarte Aqui
+
+O usuário escaneia o QR Code colado no equipamento, faz o descarte físico e os
+pontos entram na conta dele no site. O documento completo está em
+[`docs/integracao-iot-backend.md`](docs/integracao-iot-backend.md); o guia de
+instalação do backend, em [`backend/README.md`](backend/README.md).
+
+O que vale repetir aqui, porque é o que costuma ser perguntado:
+
+- **O ESP32 não deixou de ser servidor.** Continua atendendo clientes da rede
+  na porta 80. A integração é uma funcionalidade a mais.
+- **O ESP32 não é exposto à internet.** Só faz requisições de saída, por
+  polling. Nenhuma porta é aberta no roteador.
+- **A comunicação externa roda no core 0**, em task própria, enquanto o
+  `loop()` e o servidor HTTP ficam no core 1. `HTTPClient` é bloqueante: sem
+  essa separação, cada consulta ao backend deixaria a página local sem resposta
+  por vários segundos.
+- **Internet caída não trava a máquina.** O ciclo físico não depende de
+  autorização: sem sessão, a máquina continua detectando, separando, pesando e
+  abrindo a portinha — só não gera pontos. Com `BACKEND_URL` vazio a integração
+  fica desligada e o firmware funciona igual.
+- **Os pontos são do backend.** `pontos = peso_medido × pilhas.pontos_por_grama`.
+  O usuário declara só o tipo de pilha; o peso vem da balança; o dispositivo
+  nunca envia pontos.
+- **Ponto duplicado é impossível pelo banco**, não por cuidado do PHP:
+  `descarte.fk_sessao_descarte_id` é `UNIQUE`, então uma sessão nunca gera dois
+  descartes, mesmo que o ESP32 reenvie a conclusão por timeout.
+
+Para configurar, ver a seção 7 do documento da integração. Em resumo: copiar
+`src/config_backend.exemplo.h` para `src/config_backend.h`, rodar
+`php backend/ferramentas/gerar-chave.php "<nome do ponto>"` e aplicar
+`backend/sql/01_integracao_iot.sql` no banco.
 
 ## 10. Próximas etapas
 
