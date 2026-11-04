@@ -95,6 +95,22 @@ Imprime três coisas: o que colar em `src/config_backend.h` do firmware, o
 A chave em texto puro aparece **uma única vez** — o banco guarda só o
 `password_hash`. Perdeu, gere outra.
 
+### 2.4 Gerar o QR Code
+
+Com o dispositivo já cadastrado, a imagem sai de uma ferramenta na raiz do
+repositório IoT:
+
+```bash
+python tools/gerar_qrcode.py --dispositivo esp32-bloco7 --base http://192.168.0.15/descarte-aqui/php/iot --nome "Ponto de coleta - Bloco 7"
+```
+
+Precisa de `pip install segno` na máquina de quem gera. Sai em `docs/qrcodes/`
+o QR Code em SVG e uma etiqueta de 80×120 mm para imprimir.
+
+Antes de imprimir, escaneie da própria tela e confirme que abre a página certa:
+se o dispositivo não estiver na tabela `dispositivo`, a página responde
+"Equipamento não encontrado".
+
 ## 3. Rotas
 
 ### Do usuário (exigem login de cidadão)

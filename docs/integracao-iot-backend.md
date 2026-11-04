@@ -263,6 +263,27 @@ https://<dominio>/php/iot/publico/descartar.php?d=esp32-bloco7
 Sem senha, sem token permanente, sem dado pessoal, sem credencial. Quem
 identifica a pessoa é a sessão do site.
 
+A imagem sai de `tools/gerar_qrcode.py`:
+
+```bash
+python tools/gerar_qrcode.py --dispositivo esp32-bloco7 \
+    --base http://192.168.0.15/descarte-aqui/php/iot \
+    --nome "Ponto de coleta - Bloco 7"
+```
+
+Gera, em `docs/qrcodes/`, o QR Code em SVG e uma etiqueta de 80×120 mm para
+imprimir. Correção de erro **H** (recupera ~30%), porque a etiqueta vai colada
+num equipamento e sofre risco, poeira e dedo.
+
+O script valida o layout antes de escrever: confere que nenhum texto cai fora
+da etiqueta e que a zona de silêncio em volta do QR tem os 4 módulos que a
+norma pede. Essa validação existe porque a primeira versão imprimia o código do
+dispositivo em 110 mm numa etiqueta de 105 mm — sumia. E a zona de silêncio não
+é detalhe estético: no teste, o mesmo QR sem ela **não decodifica**.
+
+Os arquivos gerados não são versionados (`docs/qrcodes/` está no `.gitignore`):
+dependem do endereço do site, que muda de rede para rede. Regerar é um comando.
+
 ### Expiração
 
 `expirar_sessoes()` roda no início de cada rota e marca como `expirada` tudo que
@@ -354,6 +375,15 @@ Nenhuma dependência nova foi acrescentada ao `platformio.ini`.
 
 No backend: PHP 8 com `mysqli` e `session`, sem Composer.
 
+Ferramentas de desenvolvimento, que rodam na máquina de quem gera e **não** são
+dependência do firmware nem do site, como já acontecia com
+`tools/gerar_pagina_web.py`:
+
+| Ferramenta | Dependência | Instalação |
+|---|---|---|
+| `tools/gerar_pagina_web.py` | nenhuma | — |
+| `tools/gerar_qrcode.py` | `segno` (Python puro, sem dependências) | `pip install segno` |
+
 A leitura do JSON de resposta no firmware é feita por busca direta de chave
 (`extrairTexto` / `extrairNumero` em `src/nuvem.cpp`), e não por ArduinoJson. O
 motivo é prático: o backend é nosso, responde um JSON plano de chaves únicas, e
@@ -375,6 +405,9 @@ formato da resposta mudar, essas funções mudam junto.
 | Restrições criadas | `SHOW CREATE TABLE` | coluna gerada, 3 UNIQUE e 4 CHECK confirmados |
 | Fluxo do dispositivo | `php ferramentas/testar-fluxo.php` | **37 verificações, 0 falhas** |
 | Fluxo do usuário | cópia descartável do site + `login.php` real | login compartilhado, sessão, crédito, cancelamento e logout ok |
+| QR Code gerado | decodificado com o `QRCodeDetector` do OpenCV | devolveu exatamente a URL esperada |
+| Desenho da etiqueta | matriz reconstruída dos retângulos do SVG | idêntica à do `segno`; rasterizada, também decodifica certo |
+| Zona de silêncio | controle: o mesmo QR sem ela | **não decodifica** — é o que a validação do script evita |
 
 O teste do fluxo do usuário foi feito publicando a pasta como `php/iot/` numa
 cópia descartável do site (extraída de `origin/main` do repositório Web, que não
@@ -472,6 +505,7 @@ src/nuvem.h
 src/nuvem.cpp
 src/registro.h
 src/registro.cpp
+tools/gerar_qrcode.py
 docs/integracao-iot-backend.md
 docs/superpowers/specs/2026-11-04-integracao-esp32-backend-design.md
 ```

@@ -113,7 +113,8 @@ Descarte-Aqui-IoT/
 │   ├── sql/                   # migração do banco
 │   └── ferramentas/           # gerar chave do dispositivo, testar o fluxo
 ├── tools/
-│   └── gerar_pagina_web.py    # gera pagina_web.h a partir de src/client/
+│   ├── gerar_pagina_web.py    # gera pagina_web.h a partir de src/client/
+│   └── gerar_qrcode.py        # gera o QR Code e a etiqueta de um dispositivo
 ├── platformio.ini             # dependências e configuração da placa
 ├── README.md
 └── .gitignore
@@ -542,6 +543,36 @@ Para configurar, ver a seção 7 do documento da integração. Em resumo: copiar
 `src/config_backend.exemplo.h` para `src/config_backend.h`, rodar
 `php backend/ferramentas/gerar-chave.php "<nome do ponto>"` e aplicar
 `backend/sql/01_integracao_iot.sql` no banco.
+
+### O QR Code do equipamento
+
+Depois que o dispositivo estiver cadastrado no banco:
+
+```bash
+python tools/gerar_qrcode.py --dispositivo esp32-bloco7 --base http://192.168.0.15/descarte-aqui/php/iot --nome "Ponto de coleta - Bloco 7"
+```
+
+Sai em `docs/qrcodes/`: o QR Code sozinho (SVG) e uma etiqueta de 80×120 mm
+pronta para imprimir, recortar e colar no equipamento. Com `--png` sai também
+um PNG, útil para slides.
+
+A única dependência é o `segno`, Python puro, que fica **só na máquina de quem
+gera** — como o `gerar_pagina_web.py`, esta é uma ferramenta de
+desenvolvimento, não entra no firmware nem no site:
+
+```bash
+pip install segno
+```
+
+Dois detalhes que costumam morder:
+
+- **`localhost` não serve.** O celular não é o PC. Numa rede local, use o IP da
+  máquina que roda o XAMPP e deixe o celular no mesmo Wi-Fi. O script avisa se
+  você passar `localhost`.
+- **O QR Code aponta para o site, nunca para o ESP32.** É o site que sabe quem
+  está logado. Por isso o endereço que importa é o do site — e por isso os
+  arquivos gerados não são versionados (`docs/qrcodes/` está no `.gitignore`):
+  eles dependem da rede do dia. Regere com um comando.
 
 ## 10. Próximas etapas
 

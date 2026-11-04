@@ -16,3 +16,7 @@ src/config_wifi.h
 # Credenciais do dispositivo na integracao com o backend - nunca versionar
 src/config_backend.h
 backend/config.php
+
+# QR Codes gerados: dependem do endereco do site, que muda de rede para rede.
+# Regere com  python tools/gerar_qrcode.py  em vez de versionar um que vence.
+docs/qrcodes/
