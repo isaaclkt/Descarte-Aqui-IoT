@@ -376,3 +376,16 @@ main > *,
 .grade-iot {
   margin: 14px 0 0;
 }
+
+/* Faixa de simulacao: so aparece quando /status traz "simulado": true, ou
+   seja, quando quem responde e tools/simular_esp32.py e nao a placa. */
+.faixa-simulacao {
+  margin: 0;
+  padding: 10px 16px;
+  background: #7a1d1d;
+  color: #ffe9e9;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: center;
+  letter-spacing: 0.3px;
+}

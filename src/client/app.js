@@ -59,8 +59,34 @@ function formatarUptime(segundos) {
 let ultimoStatus = null;
 let ultimoSensor = null;
 
+// Faixa de aviso quando quem responde e o simulador, nao a placa.
+//
+// O firmware real nunca envia "simulado", entao a faixa so aparece em
+// tools/simular_esp32.py. Existe para ninguem apresentar uma demonstracao
+// como se fosse medicao de hardware - inclusive sem querer, com a tela
+// projetada e a placa desligada em cima da mesa.
+function marcarSimulacao(simulado) {
+  const existente = document.getElementById("faixa-simulacao");
+
+  if (!simulado) {
+    if (existente) existente.remove();
+    return;
+  }
+
+  if (existente) return;
+
+  const faixa = document.createElement("p");
+  faixa.id = "faixa-simulacao";
+  faixa.className = "faixa-simulacao";
+  faixa.textContent =
+    "SIMULACAO - nao ha placa conectada. Sensores, servos e balanca sao " +
+    "valores gerados por tools/simular_esp32.py.";
+  document.body.insertBefore(faixa, document.body.firstChild);
+}
+
 function aplicarStatus(status) {
   ultimoStatus = status;
+  marcarSimulacao(status.simulado === true);
   el("ip-esp32").textContent = status.ip;
 
   // modo_rede: "STA" = entrou numa rede existente

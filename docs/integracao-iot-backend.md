@@ -444,7 +444,8 @@ formato da resposta mudar, essas funções mudam junto.
 
 | O que | Como | Resultado |
 |---|---|---|
-| Compilação do firmware | `pio run -e esp32doit-devkit-v1` | sucesso, sem avisos. RAM 15,8%, Flash 73,8% |
+| Compilação do firmware | `pio run -e esp32doit-devkit-v1` | sucesso, sem avisos. RAM 15,8%; Flash **74,1% sem** `config_backend.h` e **87,9% com** a integração ligada (ver limitação 11) |
+| Simulador | `tools/simular_esp32.py` + 3D no navegador | os 9 estados do firmware animam a cena; metal acende "Pilha", não-metal acende "Rejeição" |
 | Sintaxe de todo o PHP | `php -l` nos 14 arquivos | sem erros |
 | Rotas sem banco | `curl` contra `php -S` | 401 sem credencial, 405 método errado, 401 sem login |
 | Migração do banco | aplicada sobre o banco real do PjBL 3 | ok em **MariaDB 10.4.32** (XAMPP) |
@@ -605,3 +606,20 @@ do ciclo de separação. `platformio.ini` sem dependência nova.
 9. **Sem tela de administração de dispositivos.** Cadastro por `INSERT`.
 10. **Um descarte por sessão.** Para descartar vários tipos de pilha, o usuário
     repete o processo.
+11. **Pouca folga de flash com a integração ligada.** Medido:
+
+    | Build | Flash |
+    |---|---|
+    | sem `src/config_backend.h` | 74,1% (970.969 bytes) |
+    | com a integração configurada | **87,9%** (1.151.557 bytes) |
+
+    A diferença é o linker: com `BACKEND_URL` vazio, `integracaoConfigurada()`
+    é constante-falsa e todo o cliente HTTP é descartado. Com um endereço de
+    verdade, entra o `HTTPClient` e, com ele, o `WiFiClientSecure` — só de
+    mbedTLS são ~81 KB em símbolos.
+
+    Sobram ~12% (cerca de 159 KB). Os dois maiores consumidores são o mbedTLS
+    e a página 3D, que ocupa **116 KB** sozinha (`PAGINA_3D`, o maior símbolo
+    do firmware). Se faltar espaço, as alavancas são, nessa ordem: servir o 3D
+    de fora do firmware, ou abrir mão do HTTPS e usar só `WiFiClient` — o que
+    só é aceitável enquanto o backend estiver na rede local.

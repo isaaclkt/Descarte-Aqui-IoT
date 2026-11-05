@@ -114,7 +114,8 @@ Descarte-Aqui-IoT/
 │   └── ferramentas/           # gerar chave do dispositivo, testar o fluxo
 ├── tools/
 │   ├── gerar_pagina_web.py    # gera pagina_web.h a partir de src/client/
-│   └── gerar_qrcode.py        # gera o QR Code e a etiqueta de um dispositivo
+│   ├── gerar_qrcode.py        # gera o QR Code e a etiqueta de um dispositivo
+│   └── simular_esp32.py       # simula a placa: mesmas rotas, mesmo ciclo
 ├── platformio.ini             # dependências e configuração da placa
 ├── README.md
 └── .gitignore
@@ -449,16 +450,44 @@ em sequência, permitindo o uso da página por várias pessoas. Caso os clientes
 não consigam acessar a placa, verifique o isolamento de clientes do hotspot.
 Não é necessário acesso à internet para usar a página local.
 
-### 7.3 Testar o 3D sem a placa
+### 7.3 Testar o 3D e a interface sem a placa
 
-Existe um mock em Python que responde `/status` e `/sensor` no formato do
-README e percorre os cinco estados do ciclo. Aponte a constante
-`ESP32_BASE_URL`, no início do bloco "CAMADA DE DADOS" de
-`src/client/ponto_coleta3d.html`, para o endereço do mock e abra o arquivo no
-navegador. Para conferir o fallback, basta derrubar o mock: após três consultas
-falhas o modelo cai para simulação, e volta sozinho quando o servidor retorna.
+`tools/simular_esp32.py` sobe um servidor com as **mesmas rotas do firmware**
+(`/`, `/3d`, `/status`, `/sensor`, `/servo`, `/rede`, `/descarte`, `/logs`,
+`/atuador`), servindo os arquivos de verdade de `src/client/`, e roda o mesmo
+ciclo de `src/main.cpp`, com os mesmos estados e tempos. Só biblioteca padrão.
 
-### 7.4 Testar a interface sem a placa
+```bash
+python tools/simular_esp32.py
+```
+
+Depois abra `http://127.0.0.1:8100/` (painel) ou `http://127.0.0.1:8100/3d`.
+Para disparar um ciclo à mão:
+
+```bash
+curl "http://127.0.0.1:8100/simular?tipo=nao-metal"
+```
+
+Se `src/config_backend.h` estiver preenchido, o simulador também **conversa com
+o backend PHP** igual à task de `src/nuvem.cpp`: consulta autorizações, reporta
+as etapas e envia a conclusão. Dá para escanear o QR Code no celular e ver os
+pontos serem creditados — tudo sem hardware.
+
+> **O simulador não é a placa.** Sensores, servos e balança são números
+> inventados pelo script; nada obtido ali vale como teste de hardware. Por
+> isso `/status` devolve `"simulado": true` e a página de controle mostra uma
+> faixa vermelha enquanto estiver falando com ele. O firmware real nunca envia
+> esse campo, então a faixa nunca aparece com a placa.
+
+Para conferir o fallback do 3D, derrube o simulador: após três consultas falhas
+o modelo cai para a simulação interna dele, e volta sozinho quando o servidor
+retorna.
+
+Um aviso que custa tempo: o navegador **cacheia** `ponto_coleta3d.html`, que é
+grande. Depois de editar o 3D, recarregue com `Ctrl+Shift+R` — senão você vê o
+arquivo antigo e conclui que a mudança não funcionou.
+
+### 7.4 Apontar a interface local para uma placa de verdade
 
 Dá para abrir `src/client/index.html` direto no navegador apontando para o
 ESP32: basta preencher a constante no início de `src/client/app.js`.

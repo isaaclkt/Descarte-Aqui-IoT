@@ -524,6 +524,19 @@ main > *,
 .grade-iot {
   margin: 14px 0 0;
 }
+
+/* Faixa de simulacao: so aparece quando /status traz "simulado": true, ou
+   seja, quando quem responde e tools/simular_esp32.py e nao a placa. */
+.faixa-simulacao {
+  margin: 0;
+  padding: 10px 16px;
+  background: #7a1d1d;
+  color: #ffe9e9;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: center;
+  letter-spacing: 0.3px;
+}
 )rawliteral";
 
 // ---------- app.js ----------
@@ -589,8 +602,34 @@ function formatarUptime(segundos) {
 let ultimoStatus = null;
 let ultimoSensor = null;
 
+// Faixa de aviso quando quem responde e o simulador, nao a placa.
+//
+// O firmware real nunca envia "simulado", entao a faixa so aparece em
+// tools/simular_esp32.py. Existe para ninguem apresentar uma demonstracao
+// como se fosse medicao de hardware - inclusive sem querer, com a tela
+// projetada e a placa desligada em cima da mesa.
+function marcarSimulacao(simulado) {
+  const existente = document.getElementById("faixa-simulacao");
+
+  if (!simulado) {
+    if (existente) existente.remove();
+    return;
+  }
+
+  if (existente) return;
+
+  const faixa = document.createElement("p");
+  faixa.id = "faixa-simulacao";
+  faixa.className = "faixa-simulacao";
+  faixa.textContent =
+    "SIMULACAO - nao ha placa conectada. Sensores, servos e balanca sao " +
+    "valores gerados por tools/simular_esp32.py.";
+  document.body.insertBefore(faixa, document.body.firstChild);
+}
+
 function aplicarStatus(status) {
   ultimoStatus = status;
+  marcarSimulacao(status.simulado === true);
   el("ip-esp32").textContent = status.ip;
 
   // modo_rede: "STA" = entrou numa rede existente
@@ -3271,21 +3310,45 @@ const FALHAS_ATE_SIMULACAO = 3;
 const SERVO_REPOUSO = 90;
 const SERVO_CURSO = 70;
 
+// Estes mapas precisam cobrir TODOS os valores de estadoSistema em
+// src/main.cpp. Estado que nao estiver aqui cai no 'aguardando' e o modelo
+// fica parado enquanto a maquina trabalha.
+//
+// O segundo ultrassonico trocou o antigo 'Porta aberta', de tempo fixo, por
+// quatro estados: a porta so abre quando o objeto chega ao compartimento e so
+// fecha quando a retirada e confirmada (ou quando o prazo estoura).
 const TELA_POR_ESTADO = {
+  'Iniciando': 'aguardando',
   'Aguardando objeto': 'aguardando',
   'Separando metal': 'pilha',
   'Pesando': 'pesagem',
   'Separando nao-metal': 'rejeitado',
-  'Porta aberta': 'rejeitado'
+  'Aguardando nao-metal': 'rejeitado',
+  'Retire o objeto': 'rejeitado',
+  'Objeto retirado': 'rejeitado',
+  'Retirada nao confirmada': 'rejeitado'
 };
 
 const ETAPA_POR_ESTADO = {
+  'Iniciando': null,
   'Aguardando objeto': null,
   'Separando metal': 'servo',
   'Pesando': 'pilhas',
   'Separando nao-metal': 'servo',
-  'Porta aberta': 'rejeicao'
+  'Aguardando nao-metal': 'rejeicao',
+  'Retire o objeto': 'rejeicao',
+  'Objeto retirado': null,
+  'Retirada nao confirmada': null
 };
+
+// Estados do caminho nao-metal: acendem o alerta do anel.
+const ESTADOS_NAO_METAL = [
+  'Separando nao-metal',
+  'Aguardando nao-metal',
+  'Retire o objeto',
+  'Objeto retirado',
+  'Retirada nao confirmada'
+];
 
 // Embutido = dentro do iframe da pagina de controle. Nesse caso nao fazemos
 // polling proprio: o pai ja consulta o ESP32 e repassa o estado por
@@ -3448,7 +3511,7 @@ function aplicarEstadoReal(status, sensor) {
     state.ringBoost = 0;
   }
 
-  if (status.estado === 'Separando nao-metal' || status.estado === 'Porta aberta') {
+  if (ESTADOS_NAO_METAL.indexOf(status.estado) !== -1) {
     state.ringAlert = 1;
   }
 
