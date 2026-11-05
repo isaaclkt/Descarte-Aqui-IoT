@@ -41,14 +41,66 @@ if (!is_array($GLOBALS['CONFIG_IOT'])) {
 }
 
 // -----------------------------------------------------------------------------
-// 2) Sessao: a do site quando publicado em php/iot/, a copia local quando nao
+// 2) Onde o site esta, no disco e na URL
+//
+// Nao da para descobrir isso so com __DIR__. Quando a pasta e publicada por
+// link simbolico ou juncao do Windows - jeito comum de desenvolver, porque
+// evita manter uma copia desatualizada -, __DIR__ aponta para o repositorio de
+// origem, nao para dentro do site. A deteccao por caminho fisico entao falha e
+// a pagina perde o CSS, as fontes e os botoes de login.
+//
+// DOCUMENT_ROOT + o trecho da URL antes de /php/iot/ funciona nos dois casos,
+// copia ou link, e ainda devolve um prefixo de URL absoluto, melhor que
+// '../../../' para montar os links dos assets.
 // -----------------------------------------------------------------------------
 
-$sessaoDoSite = __DIR__ . '/../sessao.php';
+$GLOBALS['IOT_RAIZ_SITE'] = null;   // caminho no disco, ou null se rodando solto
+$GLOBALS['IOT_URL_SITE'] = null;    // prefixo de URL terminado em '/', ou null
+
+(static function (): void {
+    $script = (string) ($_SERVER['SCRIPT_NAME'] ?? '');
+    $posicao = strpos($script, '/php/iot/');
+
+    if ($posicao !== false) {
+        $prefixo = substr($script, 0, $posicao);           // ex.: /descarte-aqui
+        $docRoot = realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''));
+
+        if ($docRoot !== false) {
+            $candidato = $docRoot . str_replace('/', DIRECTORY_SEPARATOR, $prefixo);
+
+            if (is_dir($candidato . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'css')) {
+                $GLOBALS['IOT_RAIZ_SITE'] = $candidato;
+                $GLOBALS['IOT_URL_SITE'] = $prefixo . '/';
+                return;
+            }
+        }
+    }
+
+    // Sem servidor web no meio (php -S apontando direto para backend/), ou
+    // layout diferente: tenta o caminho fisico.
+    $fisico = realpath(__DIR__ . '/..');
+
+    if ($fisico !== false && is_dir($fisico . DIRECTORY_SEPARATOR . 'assets' . DIRECTORY_SEPARATOR . 'css')) {
+        $GLOBALS['IOT_RAIZ_SITE'] = $fisico;
+        $GLOBALS['IOT_URL_SITE'] = '../../';
+    }
+})();
+
+// -----------------------------------------------------------------------------
+// 3) Sessao: a do site quando ele existe, a copia local quando nao
+//
+// E daqui que vem o compartilhamento do login: o sessao.php do site configura o
+// cookie, e a sessao passa a ser a mesma criada por php/login.php.
+// -----------------------------------------------------------------------------
+
+$sessaoDoSite = $GLOBALS['IOT_RAIZ_SITE'] !== null
+    ? $GLOBALS['IOT_RAIZ_SITE'] . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'sessao.php'
+    : __DIR__ . '/../sessao.php';
+
 require_once is_file($sessaoDoSite) ? $sessaoDoSite : __DIR__ . '/local/sessao.php';
 
 // -----------------------------------------------------------------------------
-// 3) Utilitarios
+// 4) Utilitarios
 // -----------------------------------------------------------------------------
 
 require_once __DIR__ . '/comum.php';

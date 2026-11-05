@@ -20,9 +20,10 @@ require_once __DIR__ . '/../bootstrap.php';
 // a pasta roda isolada (teste com php -S).
 // -----------------------------------------------------------------------------
 
-$raizSite = realpath(__DIR__ . '/../../..');
-$dentroDoSite = $raizSite !== false && is_dir($raizSite . '/assets/css');
-$prefixo = $dentroDoSite ? '../../../' : '';
+// Quem descobre isso e o bootstrap: ver o comentario la sobre por que __DIR__
+// nao serve quando a pasta e publicada por link simbolico ou juncao.
+$dentroDoSite = $GLOBALS['IOT_RAIZ_SITE'] !== null;
+$prefixo = (string) ($GLOBALS['IOT_URL_SITE'] ?? '');
 
 $codigoDispositivo = trim((string) ($_GET['d'] ?? ''));
 $usuarioId = usuario_logado();

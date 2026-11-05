@@ -31,14 +31,25 @@ A pasta precisa ficar **dentro do site**, como `php/iot/`:
 
 Isso não é preferência de organização: **o cookie de sessão do PHP só vale
 dentro do mesmo domínio**. Fora do site, o login não atravessa e o usuário
-nunca é reconhecido. O `bootstrap.php` detecta a situação:
+nunca é reconhecido.
+
+O `bootstrap.php` descobre onde o site está usando `DOCUMENT_ROOT` mais o
+trecho da URL antes de `/php/iot/`:
 
 ```php
-$base = is_file(__DIR__ . '/../sessao.php') ? __DIR__ . '/..' : __DIR__ . '/local';
+/descarte-aqui/php/iot/publico/descartar.php   →   raiz = <DOCUMENT_ROOT>/descarte-aqui
 ```
 
-Publicada em `php/iot/`, ela carrega o `sessao.php` **do site**. Rodando
-isolada (teste com `php -S`), usa a cópia de apoio em `local/`.
+Achando a raiz, ele carrega o `sessao.php` **do site** e monta os links dos
+assets com URL absoluta. Não achando — `php -S` apontado direto para
+`backend/`, por exemplo —, usa a cópia de apoio em `local/` e o estilo mínimo
+embutido na página.
+
+> Por que não `__DIR__`: publicar por link simbólico ou junção do Windows é
+> comum, porque evita manter uma cópia desatualizada. Nesse caso `__DIR__`
+> aponta para o repositório de origem, não para dentro do site, e qualquer
+> detecção por caminho físico falha — a página abre sem o CSS e sem os botões
+> de login. Foi o que aconteceu na primeira montagem do ambiente de teste.
 
 ## 2. Instalação
 
