@@ -37,6 +37,12 @@ return [
     // O backend recusa qualquer peso fora desta faixa. Serve de rede de
     // seguranca contra balanca descalibrada ou leitura absurda: sem isso,
     // uma leitura errada da HX711 viraria pontos.
+    //
+    // O banco tambem tem o seu proprio limite: o trigger
+    // trg_descarte_pilha_valida_bi recusa mais de 5000 g por tipo de pilha
+    // numa entrega. O limite daqui e mais apertado de proposito - este
+    // equipamento recebe pilha solta, nao entrega de caixa - e e o que o
+    // usuario ve, com mensagem clara, antes de o banco precisar barrar.
     // ---------------------------------------------------------------------
     'peso_minimo_g' => 0.5,
     'peso_maximo_g' => 2000.0,

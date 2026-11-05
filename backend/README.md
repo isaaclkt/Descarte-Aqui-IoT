@@ -44,6 +44,15 @@ isolada (teste com `php -S`), usa a cópia de apoio em `local/`.
 
 ### 2.1 Banco de dados
 
+Primeiro o banco da equipe — a entrega final do PjBL 3, que cria `descarteaqui`
+com tabelas, views, functions, procedures e triggers. É reexecutável:
+
+```bash
+mysql -u root < "../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql"
+```
+
+Depois a migração da integração:
+
 ```bash
 mysql -u root descarteaqui < sql/01_integracao_iot.sql
 ```
@@ -52,20 +61,13 @@ A migração **só adiciona**: cria `dispositivo`, `sessao_descarte` e
 `evento_iot`, e acrescenta duas colunas a `descarte`. Nada existente é apagado
 ou alterado de forma destrutiva.
 
-Antes de rodar, confira que os nomes de coluna batem com o seu banco:
+> **Não** rode os scripts de `docs/banco-de-dados/sql/` do repositório Web: são
+> de outra versão do modelo (banco `descarte_aqui`, com underline). O próprio
+> `docs/integracao-minha-area.md` da equipe avisa isso.
 
-```bash
-mysql -u root descarteaqui -e "SHOW COLUMNS FROM descarte;"
-```
-
-A migração espera o esquema que o PHP do site realmente consulta
-(`usuario.pontos`, `descarte.fk_usuario_id`, `pilhas.pontos_por_grama`...), e
-**não** o de `docs/banco-de-dados/sql/` do repositório Web, que descreve outra
-versão do modelo. O próprio `docs/integracao-minha-area.md` da equipe avisa
-isso.
-
-Rode uma vez só: MySQL e MariaDB não aceitam `ADD COLUMN IF NOT EXISTS`. O
-bloco de rollback está comentado no fim do arquivo `.sql`.
+Rode a migração uma vez só: MySQL e MariaDB não aceitam
+`ADD COLUMN IF NOT EXISTS`. O bloco de rollback está comentado no fim do
+arquivo `.sql`.
 
 ### 2.2 Configuração
 
@@ -139,13 +141,24 @@ encerrada ou expirada), 422 (peso fora da faixa), 503 (banco indisponível).
 
 ## 4. Como os pontos são calculados
 
-```
-pontos = round(peso_medido_g × pilhas.pontos_por_grama)
+A regra é a do banco:
+
+```sql
+pontos = FLOOR( fn_calcular_pontos(peso_medido_g, pilhas.pontos_por_grama) )
 ```
 
-O usuário declara só o **tipo** de pilha. O peso vem da balança HX711 do
-equipamento. O cálculo acontece no backend — o dispositivo nunca envia pontos,
-e se enviar, são ignorados.
+`fn_calcular_pontos()` é a function da equipe (PjBL 3). Ela aplica **bônus por
+volume**: fator 1,10 a partir de 500 g e 1,20 a partir de 1 kg. O `FLOOR` é o
+mesmo de `sp_registrar_descarte`, porque `usuario.pontos` é `INT`.
+
+`concluir.php` chama essa function em vez de refazer a conta em PHP — duas
+implementações da mesma regra divergiriam um dia. Não chamamos
+`sp_registrar_descarte` inteira porque ela abre e fecha a própria transação, o
+que encerraria a nossa antes de gravarmos o vínculo com a sessão, que é o que
+impede creditar duas vezes.
+
+O usuário declara só o **tipo** de pilha. O peso vem da balança HX711. O
+dispositivo nunca envia pontos, e se enviar, são ignorados.
 
 ## 5. O que impede ponto duplicado
 
@@ -164,17 +177,20 @@ simultâneas da mesma sessão.
 
 ### Automatizado (lado do dispositivo)
 
-Numa base **descartável**, nunca na de produção:
+O teste cria descartes e credita pontos, então use uma base **descartável**.
+Para voltar ao estado inicial, apague o banco e refaça os dois passos:
 
 ```bash
-mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui_teste_iot; CREATE DATABASE descarteaqui_teste_iot CHARACTER SET utf8mb4;"
+mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui;" && mysql -u root < "../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql" && mysql -u root descarteaqui < sql/01_integracao_iot.sql
 ```
 
-```bash
-mysql -u root descarteaqui_teste_iot < sql/00_estrutura_minima_teste.sql && mysql -u root descarteaqui_teste_iot < sql/01_integracao_iot.sql
-```
+> **Não basta rodar o script do PjBL 3 de novo.** Ele é reexecutável, mas faz
+> `SET FOREIGN_KEY_CHECKS = 0` e `TRUNCATE descarte`. Sobre um banco que já tem
+> a integração, isso apaga os descartes e deixa `sessao_descarte.fk_descarte_id`
+> apontando para linhas que não existem mais — sem o banco reclamar. Medi isso:
+> sobraram 2 sessões órfãs. Apague o banco inteiro.
 
-Aponte `config.php` para `descarteaqui_teste_iot`, suba o servidor e rode:
+Suba o servidor e rode:
 
 ```bash
 php -S 127.0.0.1:8099 -t .
@@ -184,13 +200,14 @@ php -S 127.0.0.1:8099 -t .
 php ferramentas/testar-fluxo.php http://127.0.0.1:8099
 ```
 
-São 37 verificações: autorização, telemetria, conclusão, crédito, idempotência
-do reenvio, chave errada, material não-metálico, peso fora da faixa, sessão
-expirada, exclusividade do dispositivo e ausência de chaves no log.
+São 41 verificações: autorização, telemetria, conclusão, crédito, **bônus por
+volume**, idempotência do reenvio, chave errada, material não-metálico, peso
+fora da faixa, sessão expirada, exclusividade do dispositivo e ausência de
+chaves no log.
 
-`sql/00_estrutura_minima_teste.sql` é um **andaime de teste**: reconstrói o
-mínimo das tabelas do site para que qualquer integrante teste do zero sem
-depender da máquina de outra pessoa. Não é o modelo de dados do projeto.
+O número de pontos esperado não é calculado pelo teste: é perguntado ao banco,
+com `fn_calcular_pontos()`. O teste verifica que o backend concorda com a regra
+da equipe, não com uma fórmula redigitada no arquivo de teste.
 
 ### Manual (lado do usuário)
 

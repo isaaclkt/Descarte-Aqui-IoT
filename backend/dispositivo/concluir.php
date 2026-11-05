@@ -213,10 +213,34 @@ try {
         ]);
     }
 
-    // ---- Pontuacao: calculada AQUI, nunca enviada pelo dispositivo ---------
+    // ---- Pontuacao: a regra e do BANCO, nao deste arquivo -------------------
+    //
+    // fn_calcular_pontos() e a function que a equipe definiu no PjBL 3. Ela
+    // nao e apenas peso x pontos_por_grama: tem bonus por volume (fator 1,10 a
+    // partir de 500 g e 1,20 a partir de 1 kg). Refazer essa conta em PHP
+    // criaria uma segunda regra de pontuacao no projeto, que um dia divergiria
+    // da do banco sem ninguem perceber.
+    //
+    // E por que nao chamar sp_registrar_descarte, que faz o INSERT inteiro?
+    // Porque ela abre e fecha a PROPRIA transacao. Chamada daqui, o COMMIT
+    // dela encerraria tambem a nossa - antes de gravarmos o vinculo com a
+    // sessao, que e justamente o que impede creditar duas vezes
+    // (descarte.fk_sessao_descarte_id e UNIQUE). Entao reaproveitamos a
+    // function, que e a parte que de fato muda, e mantemos a transacao sob
+    // nosso controle. O resto segue a procedure passo a passo: mesmo STATUS
+    // 'aprovado', mesmo FLOOR no credito, mesmas colunas de data.
 
-    $pontosPorGrama = (float) $sessao['pontos_por_grama'];
-    $pontos = (int) round($peso * $pontosPorGrama);
+    $calculo = consultar_linha(
+        'SELECT fn_calcular_pontos(?, ?) AS pontos',
+        'dd',
+        [$peso, (float) $sessao['pontos_por_grama']]
+    );
+
+    $pontosExatos = (float) ($calculo['pontos'] ?? 0);
+
+    // usuario.pontos e INT e sp_registrar_descarte credita com FLOOR.
+    // Seguimos a mesma conta para o saldo nao divergir do resto do sistema.
+    $pontos = (int) floor($pontosExatos);
 
     if ($pontos < 0) {
         $pontos = 0;
@@ -225,14 +249,15 @@ try {
     // ---- Registro do descarte ----------------------------------------------
 
     consultar(
-        "INSERT INTO descarte (data, status, peso_total_gramas, pontos_gerados,
+        "INSERT INTO descarte (DATA, STATUS, peso_total_gramas, pontos_gerados,
                                fk_usuario_id, fk_ponto_coleta_id,
-                               fk_dispositivo_id, fk_sessao_descarte_id)
-         VALUES (CURDATE(), 'aprovado', ?, ?, ?, ?, ?, ?)",
+                               fk_dispositivo_id, fk_sessao_descarte_id,
+                               created_at, updated_at)
+         VALUES (CURDATE(), 'aprovado', ?, ?, ?, ?, ?, ?, NOW(), NOW())",
         'ddiiii',
         [
             $peso,
-            (float) $pontos,
+            $pontosExatos,
             (int) $sessao['fk_usuario_id'],
             $dispositivo['fk_ponto_coleta_id'] !== null ? (int) $dispositivo['fk_ponto_coleta_id'] : null,
             $dispositivoId,
@@ -249,8 +274,10 @@ try {
     );
 
     // usuario.pontos e a coluna de saldo que php/minha-area.php ja exibe.
+    // Mesmo UPDATE de sp_registrar_descarte, inclusive o COALESCE: o trigger
+    // trg_usuario_log_pontos_au registra a mudanca em log_pontos_usuario.
     consultar(
-        'UPDATE usuario SET pontos = pontos + ?, updated_at = NOW() WHERE id = ?',
+        'UPDATE usuario SET pontos = COALESCE(pontos, 0) + ?, updated_at = NOW() WHERE id = ?',
         'ii',
         [$pontos, (int) $sessao['fk_usuario_id']]
     );
@@ -270,10 +297,11 @@ try {
         'INFO',
         'descarte_concluido',
         sprintf(
-            'Descarte %d: %.3f g de %s, %d pontos. %s',
+            'Descarte %d: %.3f g de %s, %.2f pontos (creditados %d). %s',
             $descarteId,
             $peso,
             (string) $sessao['pilha_nome'],
+            $pontosExatos,
             $pontos,
             $resultado
         ),
@@ -282,11 +310,12 @@ try {
     );
 
     responder_json(200, [
-        'ok'        => true,
-        'creditado' => true,
-        'descarte'  => $descarteId,
-        'pontos'    => $pontos,
-        'peso_g'    => $peso,
+        'ok'            => true,
+        'creditado'     => true,
+        'descarte'      => $descarteId,
+        'pontos'        => $pontos,
+        'pontos_exatos' => $pontosExatos,
+        'peso_g'        => $peso,
     ]);
 } catch (Throwable $erro) {
     try {

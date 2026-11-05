@@ -221,12 +221,35 @@ Códigos: 200, 400, 401, 403, 404, 405, 409, 422, 503.
 
 ### Pontuação
 
-```
-pontos = round(peso_medido_g × pilhas.pontos_por_grama)
+A regra é a do banco, não deste backend:
+
+```sql
+pontos = FLOOR( fn_calcular_pontos(peso_medido_g, pilhas.pontos_por_grama) )
 ```
 
-O usuário declara só o **tipo** de pilha. O peso vem da balança. O cálculo é do
-backend; o que o dispositivo diga sobre pontos é ignorado.
+`fn_calcular_pontos()` é a function que a equipe definiu no PjBL 3. Ela **não**
+é apenas peso × pontos_por_grama: aplica bônus por volume — fator 1,10 a partir
+de 500 g e 1,20 a partir de 1 kg. O `FLOOR` é o mesmo que
+`sp_registrar_descarte` usa ao creditar, porque `usuario.pontos` é `INT`.
+
+`concluir.php` chama a function em vez de refazer a conta em PHP: duas
+implementações da mesma regra divergiriam um dia sem ninguém notar.
+
+Por que não chamar `sp_registrar_descarte`, que faria o INSERT inteiro: ela
+abre e fecha a própria transação. Chamada de dentro de `concluir.php`, o
+`COMMIT` dela encerraria também a nossa — antes de gravarmos o vínculo com a
+sessão, que é justamente o que impede creditar duas vezes. Então reaproveitamos
+a parte que de fato muda (a fórmula) e mantemos a transação sob controle,
+seguindo a procedure passo a passo no resto: mesmo `STATUS` `'aprovado'`, mesmo
+`FLOOR`, mesmas colunas de data.
+
+O usuário declara só o **tipo** de pilha. O peso vem da balança. O que o
+dispositivo diga sobre pontos é ignorado.
+
+O banco tem ainda o seu próprio limite: `trg_descarte_pilha_valida_bi` recusa
+mais de 5000 g por tipo de pilha. O `peso_maximo_g` da configuração (2000 g por
+padrão) é mais apertado de propósito e devolve uma mensagem clara antes de o
+trigger precisar barrar.
 
 ### Validações em `concluir.php`
 
@@ -353,12 +376,35 @@ Código e chave saem de:
 php backend/ferramentas/gerar-chave.php "Ponto de coleta - Bloco 7"
 ```
 
+### Banco de dados
+
+A base é a entrega final do PjBL 3 da equipe, que cria o banco `descarteaqui`
+com tabelas, views, functions, procedures e triggers. É reexecutável:
+
+```bash
+mysql -u root < "Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql"
+```
+
+Depois, a migração da integração, que só acrescenta:
+
+```bash
+mysql -u root descarteaqui < backend/sql/01_integracao_iot.sql
+```
+
+**Para recomeçar do zero, apague o banco antes.** Rodar só o script do PjBL 3
+de novo não serve: ele faz `SET FOREIGN_KEY_CHECKS = 0` e `TRUNCATE descarte`,
+o que apaga os descartes e deixa `sessao_descarte.fk_descarte_id` apontando
+para linhas inexistentes, sem erro nenhum. Verificado: sobraram 2 sessões
+órfãs. O caminho certo é `DROP DATABASE descarteaqui` e refazer os dois passos.
+
+Não rode os scripts de `docs/banco-de-dados/sql/` do repo Web: são de outra
+versão do modelo (banco `descarte_aqui`, com underline) e não servem aqui.
+
 ### Backend no servidor (novo)
 
-Ver [`backend/README.md`](../backend/README.md). Em resumo: rodar
-`sql/01_integracao_iot.sql`, copiar `config.exemplo.php` para `config.php` e
-publicar a pasta como `php/iot/` **dentro do site** — o cookie de sessão só vale
-no mesmo domínio.
+Ver [`backend/README.md`](../backend/README.md). Em resumo: copiar
+`config.exemplo.php` para `config.php` e publicar a pasta como `php/iot/`
+**dentro do site** — o cookie de sessão só vale no mesmo domínio.
 
 ---
 
@@ -401,9 +447,12 @@ formato da resposta mudar, essas funções mudam junto.
 | Compilação do firmware | `pio run -e esp32doit-devkit-v1` | sucesso, sem avisos. RAM 15,8%, Flash 73,8% |
 | Sintaxe de todo o PHP | `php -l` nos 14 arquivos | sem erros |
 | Rotas sem banco | `curl` contra `php -S` | 401 sem credencial, 405 método errado, 401 sem login |
-| Migração do banco | aplicada em base limpa | ok em **MariaDB 10.4.32** (XAMPP) |
+| Migração do banco | aplicada sobre o banco real do PjBL 3 | ok em **MariaDB 10.4.32** (XAMPP) |
 | Restrições criadas | `SHOW CREATE TABLE` | coluna gerada, 3 UNIQUE e 4 CHECK confirmados |
-| Fluxo do dispositivo | `php ferramentas/testar-fluxo.php` | **37 verificações, 0 falhas** |
+| Fluxo do dispositivo | `php ferramentas/testar-fluxo.php` | **41 verificações, 0 falhas** |
+| Bônus por volume | 600 g pela integração | 330 pontos, e não os 300 de peso × ponto |
+| Views da equipe | `vw_descartes_detalhados` | descarte do dispositivo aparece com protocolo `DSC-202611-00025` |
+| Auditoria da equipe | `log_pontos_usuario` | trigger registrou as duas alterações de saldo |
 | Fluxo do usuário | cópia descartável do site + `login.php` real | login compartilhado, sessão, crédito, cancelamento e logout ok |
 | QR Code gerado | decodificado com o `QRCodeDetector` do OpenCV | devolveu exatamente a URL esperada |
 | Desenho da etiqueta | matriz reconstruída dos retângulos do SVG | idêntica à do `segno`; rasterizada, também decodifica certo |
@@ -484,7 +533,6 @@ backend/bootstrap.php
 backend/comum.php
 backend/config.exemplo.php
 backend/local/sessao.php
-backend/sql/00_estrutura_minima_teste.sql
 backend/sql/01_integracao_iot.sql
 backend/publico/descartar.php
 backend/publico/sessao-abrir.php
@@ -540,9 +588,12 @@ do ciclo de separação. `platformio.ini` sem dependência nova.
    isso, a renovação do certificado do site derrubaria a integração no meio da
    apresentação. Protege contra escuta passiva, não contra um ataque ativo na
    rede.
-5. **Esquema do banco sem DDL versionado.** O esquema real foi reconstruído das
-   migrações Laravel removidas em `d6d848b` e das queries do PHP atual. A
-   migração deve ser conferida contra o banco da equipe antes de rodar.
+5. **O DDL do banco está no outro repositório.** A fonte é
+   `banco/01_descarteaqui_entrega_final.sql`, no repositório
+   `Descarte Aqui - Web`. Quem clonar só o repo IoT consegue compilar o
+   firmware e ler o código, mas não monta o banco sem clonar o Web também. Os
+   caminhos documentados aqui supõem as duas pastas lado a lado, como estão na
+   máquina da equipe.
 6. **O backend mora no repositório IoT.** Para o fluxo completo funcionar, a
    pasta precisa ser publicada como `php/iot/` no mesmo domínio do site.
 7. **Retorno depois do login.** O site volta para `minha-area.php`, então o

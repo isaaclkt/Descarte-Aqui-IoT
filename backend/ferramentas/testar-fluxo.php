@@ -11,17 +11,22 @@
  * HTTP identicas as que o firmware faz. O que este script prova e que o
  * backend e o banco se comportam como projetado.
  *
- * Preparacao (base DESCARTAVEL, nunca a de producao):
+ * Preparacao - use uma base DESCARTAVEL, nunca a de producao. O script do
+ * PjBL 3 e reexecutavel e recria os dados de teste, entao rodar de novo
+ * devolve a base ao estado inicial:
  *
- *   mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui_teste_iot; CREATE DATABASE descarteaqui_teste_iot CHARACTER SET utf8mb4;"
- *   mysql -u root descarteaqui_teste_iot < sql/00_estrutura_minima_teste.sql
- *   mysql -u root descarteaqui_teste_iot < sql/01_integracao_iot.sql
+ *   mysql -u root < "../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql"
+ *   mysql -u root descarteaqui < sql/01_integracao_iot.sql
  *
- *   Aponte backend/config.php para 'descarteaqui_teste_iot' e suba o servidor:
+ *   Depois suba o servidor:
  *   php -S 127.0.0.1:8099 -t backend
  *
  * Uso:
  *   php ferramentas/testar-fluxo.php http://127.0.0.1:8099
+ *
+ * O numero de pontos esperado NAO e calculado aqui: e perguntado ao proprio
+ * banco, com fn_calcular_pontos(). O teste verifica que o backend concorda
+ * com a regra da equipe, nao com uma formula redigitada neste arquivo.
  */
 
 declare(strict_types=1);
@@ -125,8 +130,25 @@ $usuario = consultar_linha('SELECT id, pontos FROM usuario ORDER BY id LIMIT 1')
 $pilha = consultar_linha('SELECT id, nome, pontos_por_grama FROM pilhas ORDER BY id LIMIT 1');
 
 if ($usuario === null || $pilha === null) {
-    fwrite(STDERR, "Faltam dados base. Rode sql/00_estrutura_minima_teste.sql nesta base.\n");
+    fwrite(STDERR, "Faltam dados base (usuario / pilhas).\n");
+    fwrite(STDERR, "Rode o script do PjBL 3 nesta base:\n");
+    fwrite(STDERR, "  mysql -u root < \"../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql\"\n");
     exit(2);
+}
+
+/**
+ * Quantos pontos o BANCO diz que um peso vale, com a regra da equipe
+ * (fn_calcular_pontos + o FLOOR que sp_registrar_descarte usa ao creditar).
+ */
+function pontosEsperados(float $peso, float $pontosPorGrama): int
+{
+    $linha = consultar_linha(
+        'SELECT FLOOR(fn_calcular_pontos(?, ?)) AS p',
+        'dd',
+        [$peso, $pontosPorGrama]
+    );
+
+    return (int) $linha['p'];
 }
 
 $usuarioId = (int) $usuario['id'];
@@ -207,7 +229,7 @@ verificar('telemetria aceita -> 200', $c === 200, "veio {$c}");
 verificar('status virou "em_andamento"', ($r['status'] ?? '') === 'em_andamento');
 
 $peso = 24.0;
-$pontosEsperados = (int) round($peso * $pontosPorGrama);
+$pontosEsperados = pontosEsperados($peso, $pontosPorGrama);
 
 [$c, $r] = chamar("{$base}/dispositivo/concluir.php", 'POST', $cabecalhosOk,
     ['sessao' => $sessao, 'chave_conclusao' => $chaveConclusao, 'peso_g' => $peso, 'metal' => true,
@@ -215,7 +237,7 @@ $pontosEsperados = (int) round($peso * $pontosPorGrama);
 verificar('conclusao aceita -> 200', $c === 200, "veio {$c}");
 verificar('creditado = true', ($r['creditado'] ?? false) === true);
 verificar(
-    sprintf('pontos calculados pelo backend = %d', $pontosEsperados),
+    sprintf('pontos iguais aos de fn_calcular_pontos = %d', $pontosEsperados),
     (int) ($r['pontos'] ?? -1) === $pontosEsperados,
     'veio ' . (string) ($r['pontos'] ?? 'nada')
 );
@@ -251,6 +273,40 @@ verificar('saldo NAO mudou', saldo($usuarioId) === $saldoDepois,
 
 $quantos = (int) consultar_linha('SELECT COUNT(*) AS n FROM descarte WHERE fk_sessao_descarte_id = (SELECT id FROM sessao_descarte WHERE codigo = ?)', 's', [$sessao])['n'];
 verificar('exatamente 1 descarte para a sessao', $quantos === 1, "contei {$quantos}");
+
+// -----------------------------------------------------------------------------
+echo "\n3.1) O bonus por volume da equipe e respeitado\n";
+// -----------------------------------------------------------------------------
+
+// fn_calcular_pontos aplica fator 1,10 a partir de 500 g e 1,20 a partir de
+// 1 kg. Um backend que fizesse apenas peso x pontos_por_grama passaria em
+// todos os testes acima e erraria aqui - foi exatamente o caso antes de a
+// integracao passar a usar a function do banco.
+$pesoBonus = 600.0;
+
+if ($pesoBonus > (float) cfg('peso_maximo_g', 2000.0)) {
+    echo "  (pulado: peso_maximo_g da configuracao e menor que {$pesoBonus} g)\n";
+} else {
+    [$sessaoB, $chaveB] = abrirSessao($usuarioId, $dispositivoId, $pilhaId);
+    chamar("{$base}/dispositivo/autorizacao.php", 'GET', $cabecalhosOk, null);
+
+    $esperadoComBonus = pontosEsperados($pesoBonus, $pontosPorGrama);
+    $semBonus = (int) floor($pesoBonus * $pontosPorGrama);
+    $saldoAntesB = saldo($usuarioId);
+
+    [$c, $r] = chamar("{$base}/dispositivo/concluir.php", 'POST', $cabecalhosOk,
+        ['sessao' => $sessaoB, 'chave_conclusao' => $chaveB, 'peso_g' => $pesoBonus, 'metal' => true]);
+
+    verificar('conclusao de 600 g aceita', $c === 200, "veio {$c}");
+    verificar(
+        sprintf('pontos com bonus = %d (sem bonus seriam %d)', $esperadoComBonus, $semBonus),
+        (int) ($r['pontos'] ?? -1) === $esperadoComBonus,
+        'veio ' . (string) ($r['pontos'] ?? 'nada')
+    );
+    verificar('o bonus realmente muda o resultado (teste valido)', $esperadoComBonus > $semBonus);
+    verificar('saldo subiu o valor com bonus',
+        saldo($usuarioId) === $saldoAntesB + $esperadoComBonus);
+}
 
 // -----------------------------------------------------------------------------
 echo "\n4) Chave de conclusao errada nao gera pontos\n";

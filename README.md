@@ -532,17 +532,20 @@ O que vale repetir aqui, porque é o que costuma ser perguntado:
   autorização: sem sessão, a máquina continua detectando, separando, pesando e
   abrindo a portinha — só não gera pontos. Com `BACKEND_URL` vazio a integração
   fica desligada e o firmware funciona igual.
-- **Os pontos são do backend.** `pontos = peso_medido × pilhas.pontos_por_grama`.
-  O usuário declara só o tipo de pilha; o peso vem da balança; o dispositivo
+- **A regra de pontuação é a do banco**, não do backend novo: `concluir.php`
+  chama `fn_calcular_pontos()`, a function que a equipe definiu no PjBL 3 — que
+  inclui o bônus por volume (1,10 a partir de 500 g, 1,20 a partir de 1 kg). O
+  usuário declara só o tipo de pilha; o peso vem da balança; o dispositivo
   nunca envia pontos.
 - **Ponto duplicado é impossível pelo banco**, não por cuidado do PHP:
   `descarte.fk_sessao_descarte_id` é `UNIQUE`, então uma sessão nunca gera dois
   descartes, mesmo que o ESP32 reenvie a conclusão por timeout.
 
-Para configurar, ver a seção 7 do documento da integração. Em resumo: copiar
-`src/config_backend.exemplo.h` para `src/config_backend.h`, rodar
-`php backend/ferramentas/gerar-chave.php "<nome do ponto>"` e aplicar
-`backend/sql/01_integracao_iot.sql` no banco.
+Para configurar, ver a seção 7 do documento da integração. Em resumo: montar o
+banco com `Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql` e depois
+`backend/sql/01_integracao_iot.sql`, copiar `src/config_backend.exemplo.h` para
+`src/config_backend.h` e rodar
+`php backend/ferramentas/gerar-chave.php "<nome do ponto>"`.
 
 ### O QR Code do equipamento
 

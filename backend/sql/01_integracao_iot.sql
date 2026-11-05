@@ -23,6 +23,18 @@
 --       SHOW COLUMNS FROM descarte;
 --   * Rode uma unica vez. O MySQL 8 nao aceita ADD COLUMN IF NOT EXISTS.
 --     Para desfazer, veja o bloco comentado no fim do arquivo.
+--
+--   * CUIDADO AO RECOMECAR DO ZERO. O script do PjBL 3 e reexecutavel, mas ele
+--     faz SET FOREIGN_KEY_CHECKS = 0 e TRUNCATE em descarte. Rodado sozinho
+--     sobre um banco que ja tem esta integracao, ele apaga os descartes e
+--     DEIXA PARA TRAS as sessoes que apontavam para eles - sessao_descarte
+--     fica com fk_descarte_id orfao, sem o banco reclamar.
+--
+--     Para recomecar limpo, apague o banco inteiro e refaca os dois passos:
+--
+--         mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui;"
+--         mysql -u root < ../../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql
+--         mysql -u root descarteaqui < 01_integracao_iot.sql
 --   * Nenhuma chave, senha ou credencial aparece aqui. A chave do dispositivo
 --     e gerada por  php ferramentas/gerar-chave.php  e gravada como hash.
 -- =============================================================================
