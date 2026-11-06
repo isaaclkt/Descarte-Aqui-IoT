@@ -74,8 +74,15 @@ try {
 }
 
 // Guarda o equipamento para depois do login.
+//
+// php/login.php le estas duas chaves e, em vez de terminar em minha-area.php,
+// devolve a pessoa para esta pagina - senao ela teria de escanear o QR Code de
+// novo no meio do descarte. O instante vai junto para um codigo esquecido aqui
+// nao desviar um login comum feito dias depois; o login so aceita se for
+// recente. Quem monta o endereco de destino e o login, nunca esta pagina.
 if ($usuarioId === null && $dispositivo !== null) {
     $_SESSION['iot_dispositivo'] = $dispositivo['codigo'];
+    $_SESSION['iot_dispositivo_em'] = time();
 }
 
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
@@ -147,7 +154,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
                 <p><a class="iot-botao" href="<?= $prefixo ?>paginas/entrar.html">Entrar na minha conta</a></p>
                 <p><a class="iot-botao iot-botao--sec" href="<?= $prefixo ?>paginas/cadastro.html">Criar uma conta</a></p>
             <?php endif; ?>
-            <p class="iot-eq">Depois de entrar, escaneie o QR Code de novo para voltar a esta tela.</p>
+            <p class="iot-eq">Assim que entrar, você volta direto para esta tela.</p>
         </div>
 
     <?php else: ?>
