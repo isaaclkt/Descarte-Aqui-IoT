@@ -73,34 +73,31 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 HX711 balanca;
 
-// Fator de calibracao da balanca.
-// Para calibrar: coloque um peso conhecido, veja "peso_bruto" em /sensor e
-// divida esse valor pelo peso real em gramas. Ajuste a constante abaixo.
-#define FATOR_CALIBRACAO 420.0
+// Calibracao com as medias medidas: 253944.74 sem peso e 256629.69 com 22 g.
+// (256629.69 - 253944.74) / 22 = 122.04318 unidades brutas por grama.
+// O zero foi fixado em 253944 para que essa leitura resulte exatamente em 0 g.
+// Gramas = (leitura bruta - ZERO_BRUTO) / FATOR_CALIBRACAO.
+#define ZERO_BRUTO 253944.0
+#define FATOR_CALIBRACAO 122.04318
 
-// Sensor ultrassonico HC-SR04
-#define TRIG_PIN 19
-#define ECHO_PIN 18
-#define DISTANCIA_DETECCAO 5     // cm - abaixo disso consideramos que ha objeto
+// Sensor infravermelho E18-D80NK na entrada (substitui HC-SR04 1)
+// NPN coletor aberto, com resistor externo de 10k para 3,3V no GPIO19.
+// LOW significa objeto detectado (confirme com teste do seu modulo).
+#define SENSOR_IR_ENTRADA 19
+#define IR_NIVEL_DETECCAO LOW
+#define TEMPO_REARME_IR_MS 100
+// Tempo maximo entre passar no indutivo (entrada) e atingir o IR.
+// Ajustar conforme a distancia fisica e a velocidade de queda.
+#define MEMORIA_METAL_MS 3000
 
-// Ultrassonico 2: verifica objeto no compartimento de nao-metal
+// Ultrassonico 2: identifica a MAO na abertura da portinha.
+// O nao-metal NAO precisa mais ser detectado por este sensor.
 #define TRIG_PIN_2 27
 #define ECHO_PIN_2 33
-#define DISTANCIA_DETECCAO_2 5  // cm; ajustar conforme a posicao fisica
-#define CONFIRMACAO_RETIRADA_MS 800
-
-// Limites de tempo das duas esperas do caminho nao-metal.
-//
-// Sem eles os dois lacos de controlarRetiradaNaoMetal() nao tem saida: se o
-// objeto nao parar na frente do ultrassonico 2, ou se o sensor parar de
-// devolver eco, o ciclo nunca termina. O servidor HTTP continua respondendo
-// (os lacos chamam server.handleClient()), mas a maquina nao aceita outro
-// objeto e /atuador responde 409, entao nem pela rede da para fechar a porta.
-//
-// Estourar o prazo nao e falha grave: registra WARN, deixa tudo num estado
-// seguro e devolve o controle ao ciclo normal.
-#define TIMEOUT_CHEGADA_NAO_METAL_MS 30000   // esperando o objeto chegar
-#define TIMEOUT_PORTA_ABERTA_MS 60000        // esperando o usuario retirar
+#define DISTANCIA_DETECCAO_2 14  // mao a ate 14 cm
+#define CONFIRMACAO_RETIRADA_MS 1500  // abertura livre durante 1,5 s
+#define INTERVALO_LEITURA_PORTA_MS 80
+#define LEITURAS_CONFIRMACAO_MAO 2
 
 // Sensor indutivo de metal (LOW = metal detectado)
 #define SENSOR_METAL 32
@@ -116,8 +113,8 @@ Servo servoSeparacao;
 // Servo da portinha de retirada do nao-metal
 // (este e o atuador comandado pela rota /atuador)
 #define SERVO_PORTA_PIN 26
-#define PORTA_FECHADA 0
-#define PORTA_ABERTA 90
+#define PORTA_FECHADA 170
+#define PORTA_ABERTA 10
 
 Servo servoPorta;
 
@@ -134,6 +131,7 @@ WebServer server(80);            // servidor HTTP escutando na porta 80
 const char *FIRMWARE = "0.2.0";
 
 // Leituras dos sensores
+// E18-D80NK nao fornece distancia; -1 = medicao indisponivel.
 float distanciaCm = -1;
 bool  objetoPresente = false;
 float distanciaNaoMetalCm = -1;
@@ -161,6 +159,12 @@ bool wifiEstavaConectado = false;
 unsigned long tentativasReconexao = 0;
 
 unsigned long ultimaLeituraMs = 0;
+unsigned long inicioIrLivreMs = 0;
+bool irArmado = false;
+unsigned long ultimoMetalMs = 0;
+bool metalVisto = false;
+bool indutivoAnteriorAtivo = false;
+unsigned long ultimoLogEntradaMs = 0;
 unsigned long ultimaVerificacaoWiFi = 0;
 
 /* =====================================================================
@@ -200,23 +204,27 @@ void mostrarOled(const char *l1, const char *l2, const char *l3, const char *l4)
   display.display();
 }
 
-// Dispara o pulso do HC-SR04 e converte o eco em centimetros.
-float medirDistancia() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
+// O E18-D80NK sinaliza presenca digitalmente; nao mede distancia.
+bool lerEntradaInfravermelha() {
+  return digitalRead(SENSOR_IR_ENTRADA) == IR_NIVEL_DETECCAO;
+}
 
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-
-  digitalWrite(TRIG_PIN, LOW);
-
-  long duracao = pulseIn(ECHO_PIN, HIGH, 30000);
-
-  if (duracao == 0) {
-    return -1;                       // nenhum eco voltou dentro de 30 ms
+// O indutivo fica ANTES do infravermelho, na entrada da lixeira.
+// Registra uma passagem de metal apenas na transicao LIVRE -> METAL.
+// So o IR inicia um ciclo; sem registro recente do indutivo, e NAO PILHA.
+void registrarPassagemIndutivo(unsigned long agora) {
+  bool ativo = (digitalRead(SENSOR_METAL) == LOW);
+  if (ativo && !indutivoAnteriorAtivo) {
+    ultimoMetalMs = agora;
+    metalVisto = true;
+    Serial.println("[INDUTIVO] Metal detectado na entrada. Aguardando passagem no IR.");
   }
+  indutivoAnteriorAtivo = ativo;
 
-  return duracao * 0.0343 / 2;       // velocidade do som, ida e volta
+  if (metalVisto && agora - ultimoMetalMs > MEMORIA_METAL_MS) {
+    metalVisto = false;
+    Serial.println("[INDUTIVO] Deteccao expirada: IR nao confirmou a passagem.");
+  }
 }
 
 void definirPorta(bool abrir);
@@ -241,98 +249,78 @@ void atualizarSensorNaoMetal() {
   ultimaLeituraMs = millis();
 }
 
-// Espera a chegada ao compartimento e so fecha apos retirada confirmada.
-// Durante a espera, o servidor HTTP continua respondendo.
+// A porta abre SEM depender do HC-SR04 2 detectar o objeto que caiu.
+// Depois espera a mao aproximar e so fecha quando ela se afastar e
+// a regiao permanecer livre por CONFIRMACAO_RETIRADA_MS.
 //
-// Devolve true quando a retirada foi confirmada pelo sensor, e false quando
-// alguma das duas esperas estourou o prazo. Quem chama usa isso para contar
-// ao backend o que realmente aconteceu.
+// IMPORTANTE: o ultrassonico mede proximidade, nao identifica maos.
+// O sensor deve apontar para a ABERTURA, nao para o objeto no fundo.
+// Leitura sem eco (-1) e inconclusiva: nunca fecha a porta so por isso.
+// Nao existe fechamento automatico por prazo, para nao prender a mao.
 bool controlarRetiradaNaoMetal() {
   controleAutomaticoPorta = true;
-  estadoSistema = "Aguardando nao-metal";
-  mostrarOled("DESCARTE AQUI", "Aguardando objeto", "no compartimento", nullptr);
-  registrar(LOG_INFO, "NAO-METAL", "Aguardando deteccao pelo ultrassonico 2 (GPIO %d).", ECHO_PIN_2);
+  estadoSistema = "Aguardando mao";
 
-  // Aguarda a deteccao real (duas leituras consecutivas).
-  int deteccoes = 0;
-  unsigned long inicioEspera = millis();
-
-  while (deteccoes < 2) {
-    if (millis() - inicioEspera >= TIMEOUT_CHEGADA_NAO_METAL_MS) {
-      // O objeto nao chegou ao compartimento. Nem abrimos a porta: nao ha o
-      // que retirar. Devolve o controle para o ciclo seguir normalmente.
-      controleAutomaticoPorta = false;
-      estadoSistema = "Aguardando objeto";
-      mostrarOled("DESCARTE AQUI", "Objeto nao chegou", "ao compartimento", nullptr);
-      registrar(LOG_WARN, "NAO-METAL",
-                "Objeto nao detectado em %d s; seguindo sem abrir a porta.",
-                TIMEOUT_CHEGADA_NAO_METAL_MS / 1000);
-      return false;
-    }
-
-    server.handleClient();
-    atualizarSensorNaoMetal();
-    deteccoes = objetoNaoMetalPresente ? deteccoes + 1 : 0;
-    delay(80);
-  }
-
-  estadoSistema = "Retire o objeto";
+  // Abre imediatamente depois que o desvio para nao-metal terminou.
   definirPorta(true);
   mostrarOled("DESCARTE AQUI", "NAO E PILHA", "RETIRE O OBJETO!", "Porta aberta");
-  registrar(LOG_INFO, "NAO-METAL", "Porta aberta a %.1f cm. Retire o objeto.", (double) distanciaNaoMetalCm);
+  registrar(LOG_INFO, "NAO-METAL", "Porta aberta; aguardando mao no ultrassonico 2 (GPIO %d).", ECHO_PIN_2);
+  nuvemAvisarEtapa("porta_aberta", -1, false, pesoGramas);
 
-  // Telemetria para o backend: a porta abriu de verdade, agora. Nao bloqueia,
-  // so enfileira para a task do core 0; sem sessao autorizada, nao faz nada.
-  nuvemAvisarEtapa("porta_aberta", distanciaNaoMetalCm, false, pesoGramas);
-
-  unsigned long inicioAusencia = 0;
-  unsigned long inicioPortaAberta = millis();
-  bool retiradaConfirmada = false;
+  bool maoDetectada = false;
+  int leiturasMao = 0;
+  unsigned long inicioLivreMs = 0;
+  unsigned long ultimoLogMs = millis();
 
   while (true) {
-    if (millis() - inicioPortaAberta >= TIMEOUT_PORTA_ABERTA_MS) {
-      // Ou o objeto continua la, ou o sensor parou de responder. De um jeito
-      // ou de outro, a porta nao pode ficar aberta para sempre.
-      break;
-    }
-
     server.handleClient();
     atualizarSensorNaoMetal();
+    const unsigned long agora = millis();
 
-    if (objetoNaoMetalPresente) {
-      inicioAusencia = 0;
-    } else if (distanciaNaoMetalCm > 0) {
-      // Uma distancia valida acima do limite indica ausencia.
-      if (inicioAusencia == 0) inicioAusencia = millis();
-      if (millis() - inicioAusencia >= CONFIRMACAO_RETIRADA_MS) {
-        retiradaConfirmada = true;
-        break;
+    // Distancia <= 14 cm = aproximacao da mao (assumindo montagem correta).
+    // Distancia valida > 14 cm = abertura livre.
+    // -1 = sem eco: nao temos certeza de que a mao saiu.
+    const bool maoProxima = objetoNaoMetalPresente;
+    const bool aberturaLivre = distanciaNaoMetalCm > DISTANCIA_DETECCAO_2;
+
+    if (!maoDetectada) {
+      leiturasMao = maoProxima ? leiturasMao + 1 : 0;
+      if (leiturasMao >= LEITURAS_CONFIRMACAO_MAO) {
+        maoDetectada = true;
+        estadoSistema = "Mao detectada";
+        inicioLivreMs = 0;
+        mostrarOled("DESCARTE AQUI", "Mao detectada", "Retire o objeto", "Porta aberta");
+        registrar(LOG_INFO, "NAO-METAL", "Mao detectada a %.1f cm. Aguardando afastamento.",
+                  (double) distanciaNaoMetalCm);
       }
     } else {
-      // Sem eco: leitura inconclusiva. Por seguranca, nao fecha a porta -
-      // quem encerra a espera nesse caso e o TIMEOUT_PORTA_ABERTA_MS.
-      inicioAusencia = 0;
+      if (aberturaLivre) {
+        if (inicioLivreMs == 0) inicioLivreMs = agora;
+        if (agora - inicioLivreMs >= CONFIRMACAO_RETIRADA_MS) {
+          break;  // Mao entrou e regiao ficou livre por 1,5 s.
+        }
+      } else {
+        // Mao proxima, outro objeto ou eco ausente: reinicia a confirmacao.
+        inicioLivreMs = 0;
+      }
     }
-    delay(80);
+
+    if (agora - ultimoLogMs >= 5000) {
+      ultimoLogMs = agora;
+      registrar(LOG_INFO, "NAO-METAL", "Porta aberta, mao_vista=%s, distancia=%.1f cm.",
+                maoDetectada ? "SIM" : "NAO", (double) distanciaNaoMetalCm);
+    }
+    delay(INTERVALO_LEITURA_PORTA_MS);
   }
 
   definirPorta(false);
   controleAutomaticoPorta = false;
-
-  if (retiradaConfirmada) {
-    estadoSistema = "Objeto retirado";
-    mostrarOled("DESCARTE AQUI", "Objeto retirado!", "Porta fechada", nullptr);
-    registrar(LOG_INFO, "NAO-METAL", "Objeto retirado. Porta fechada.");
-  } else {
-    estadoSistema = "Retirada nao confirmada";
-    mostrarOled("DESCARTE AQUI", "Tempo esgotado", "Porta fechada", nullptr);
-    registrar(LOG_WARN, "NAO-METAL",
-              "Retirada nao confirmada em %d s; porta fechada por seguranca.",
-              TIMEOUT_PORTA_ABERTA_MS / 1000);
-  }
-
+  estadoSistema = "Mao retirada";
+  mostrarOled("DESCARTE AQUI", "Mao retirada", "Porta fechada", nullptr);
+  registrar(LOG_INFO, "NAO-METAL", "Abertura livre por %d ms apos detectar mao; porta fechada.",
+            CONFIRMACAO_RETIRADA_MS);
   aguardar(1000);
-  return retiradaConfirmada;
+  return true;
 }
 
 // Move o servo da portinha e atualiza o estado publicado pelas rotas.
@@ -348,10 +336,9 @@ void definirSeparacao(int posicao) {
   servoSeparacao.write(posicao);
 }
 
-// Converte a leitura bruta do HX711 em gramas, usando a tara (offset) e o
-// fator de calibracao (scale) que definimos no setup.
+// Converte a leitura bruta do HX711 em gramas com o zero e o fator medidos.
 float converterParaGramas(long bruto) {
-  return (bruto - balanca.get_offset()) / balanca.get_scale();
+  return (bruto - ZERO_BRUTO) / FATOR_CALIBRACAO;
 }
 
 // Le a balanca SEM travar o loop.
@@ -525,8 +512,13 @@ String jsonRede() {
 String jsonSensor() {
   String j = "{";
 
+  // Mantido por compatibilidade: -1 porque IR nao mede distancia.
   j += "\"distancia_cm\":";
   j += String(distanciaCm, 1);
+
+  j += ",\"sensor_entrada_tipo\":\"infravermelho\"";
+  j += ",\"sensor_entrada_gpio\":";
+  j += SENSOR_IR_ENTRADA;
 
   j += ",\"objeto_presente\":";
   j += objetoPresente ? "true" : "false";
@@ -737,20 +729,18 @@ void setup() {
   // ---------- Balanca HX711 ----------
   balanca.begin(HX711_DT, HX711_SCK);
   if (balanca.wait_ready_timeout(1000)) {
-    balanca.set_scale(FATOR_CALIBRACAO);
-    balanca.tare();
     balancaOk = true;
-    registrar(LOG_INFO, "HX711", "Pronta e tarada (fator %.1f).", (double) FATOR_CALIBRACAO);
+    registrar(LOG_INFO, "HX711", "Pronta (zero bruto %.0f, fator %.5f bruto/g).",
+              (double) ZERO_BRUTO, (double) FATOR_CALIBRACAO);
   } else {
-    // wait_ready_timeout evita que tare() trave o ESP32 para sempre
-    // caso o HX711 esteja desconectado.
+    // Evita prosseguir como se houvesse balanca quando o HX711 nao responde.
     registrar(LOG_ERRO, "HX711", "Nao respondeu - seguindo sem balanca.");
   }
 
-  // ---------- Ultrassonico ----------
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
+  // ---------- Infravermelho E18-D80NK (entrada) ----------
+  // Necessario resistor de 10k entre GPIO19 e 3V3 para saida NPN aberta.
+  pinMode(SENSOR_IR_ENTRADA, INPUT);
+  registrar(LOG_INFO, "IR", "Sensor de entrada configurado no GPIO %d.", SENSOR_IR_ENTRADA);
 
   // ---------- Ultrassonico 2 ----------
   pinMode(TRIG_PIN_2, OUTPUT);
@@ -759,6 +749,7 @@ void setup() {
 
   // ---------- Sensor indutivo ----------
   pinMode(SENSOR_METAL, INPUT_PULLUP);
+  indutivoAnteriorAtivo = (digitalRead(SENSOR_METAL) == LOW);
 
   // ---------- Servos ----------
   servoSeparacao.attach(SERVO_SEPARACAO_PIN);
@@ -793,6 +784,7 @@ void setup() {
   nuvemIniciar();
 
   estadoSistema = "Aguardando objeto";
+  mostrarOled("DESCARTE AQUI", "Aguardando", "objeto...", nullptr);
   aguardar(2000);
 }
 
@@ -819,20 +811,51 @@ void loop() {
     registrar(LOG_WARN, "WIFI", "Tentativa de reconexao numero %lu.", tentativasReconexao);
     WiFi.reconnect();
   }
-  // ---------- Leitura dos sensores ----------
-  distanciaCm = medirDistancia();
-  atualizarSensorNaoMetal();
-  metalDetectado = (digitalRead(SENSOR_METAL) == LOW);
-  objetoPresente = (distanciaCm > 0 && distanciaCm <= DISTANCIA_DETECCAO);
-  atualizarPeso();
-  ultimaLeituraMs = millis();
+  // ---------- Leitura rapida do sensor infravermelho da entrada ----------
+  // Primeiro monitoramos o indutivo na entrada; depois o IR confirma
+  // a passagem mais abaixo. O HX711 so le se uma amostra estiver pronta.
+  unsigned long agora = millis();
+  registrarPassagemIndutivo(agora);
+  objetoPresente = lerEntradaInfravermelha();
+  distanciaCm = -1;  // Sensor IR nao fornece centimetros.
+  ultimaLeituraMs = agora;
+  atualizarPeso();  // Mantem peso_g em /sensor atualizado mesmo entre descartes.
+
+  if (agora - ultimoLogEntradaMs >= 500) {
+    Serial.printf("[ENTRADA IR] objeto=%s | metal=%s | armado=%s\n",
+                  objetoPresente ? "SIM" : "NAO",
+                  digitalRead(SENSOR_METAL) == LOW ? "SIM" : "NAO",
+                  irArmado ? "SIM" : "NAO");
+    ultimoLogEntradaMs = agora;
+  }
+
+  if (!objetoPresente) {
+    if (inicioIrLivreMs == 0) inicioIrLivreMs = agora;
+    if (agora - inicioIrLivreMs >= TEMPO_REARME_IR_MS) irArmado = true;
+    delay(1);
+    return;
+  }
+
+  inicioIrLivreMs = 0;
+  if (!irArmado) {
+    delay(1);
+    return;
+  }
+  irArmado = false;
+  // Decisao: somente o IR confirma que um objeto entrou na lixeira.
+  // Se o indutivo viu metal ANTES da passagem no IR, e PILHA.
+  // Sem sinal recente do indutivo, e NAO PILHA (caminho de retirada).
+  metalDetectado = metalVisto && (agora - ultimoMetalMs <= MEMORIA_METAL_MS);
+  metalVisto = false;  // Nao reutilizar a deteccao em um proximo objeto.
+  registrar(LOG_INFO, "CLASSIFICACAO", "IR confirmou objeto. Indutivo antes do IR: %s.",
+            metalDetectado ? "SIM (PILHA)" : "NAO (NAO PILHA)");
 
   if (objetoPresente) {
 
     // Avisa o backend do inicio do ciclo. Nao bloqueia: so enfileira para a
     // task do core 0. Sem sessao autorizada, nao faz nada.
-    registrar(LOG_INFO, "SENSOR", "Objeto detectado a %.1f cm (%s).",
-              (double) distanciaCm, metalDetectado ? "metal" : "nao-metal");
+    registrar(LOG_INFO, "SENSOR", "Objeto detectado pelo IR (GPIO %d); classificacao %s.",
+              SENSOR_IR_ENTRADA, metalDetectado ? "metal" : "nao-metal");
     nuvemAvisarEtapa("objeto_detectado", distanciaCm, metalDetectado, pesoGramas);
 
     if (metalDetectado) {
@@ -863,7 +886,8 @@ void loop() {
         mostrarOled("DESCARTE AQUI", "PILHA", linhaPeso, nullptr);
 
         // Fim do ciclo com material valido: e AQUI que o descarte pode virar
-        // pontos. Quem decide se vira, e quantos, e o backend.
+        // pontos. Enviamos pesoGramas em gramas no campo peso_g;
+        // quem decide se vira pontos, e quantos, e o backend.
         nuvemConcluir(pesoGramas, true, "pilha separada");
       } else {
         registrar(LOG_ERRO, "BALANCA", "Erro na leitura; sem peso para reportar.");
@@ -886,13 +910,10 @@ void loop() {
       nuvemAvisarEtapa("separando", distanciaCm, false, pesoGramas);
       aguardar(TEMPO_ESPERA);
 
-      // A porta so abre quando o ultrassonico 2 detectar o objeto.
-      // Ela permanece aberta ate a retirada ser confirmada.
-      //
-      // Isto substitui o antigo tempo fixo de TEMPO_PORTA_ABERTA (5 s). A
-      // telemetria de "porta_aberta" foi movida para dentro da funcao, no
-      // instante em que a porta realmente abre: aqui ela seria enviada antes
-      // de o objeto sequer chegar ao compartimento.
+      // A porta abre assim que o desvio nao-metal termina, sem depender de
+      // o ultrassonico 2 detectar o objeto caindo.
+      // O HC-SR04 2 detecta a aproximacao da mao e confirma sua retirada
+      // por 1,5 segundo de distancia valida acima do limite.
       const bool retirado = controlarRetiradaNaoMetal();
 
       definirSeparacao(SERVO_INICIAL);
@@ -900,21 +921,20 @@ void loop() {
       // Nao-metal encerra a sessao sem pontos: o backend marca "recusada" e a
       // pagina do usuario explica que o material nao e pilha.
       //
-      // O ciclo termina mesmo quando a retirada nao e confirmada, entao o
-      // usuario recebe a resposta na hora em vez de esperar a sessao expirar.
-      // O texto diferencia os dois casos no log do backend.
+      // A sessao so termina quando a mao foi vista e depois se afastou.
+      // Se o sensor nao responder ou nao detectar mao, a porta permanece
+      // aberta para evitar fechar sobre a pessoa.
       nuvemConcluir(0, false, retirado ? "nao e pilha" : "nao e pilha, sem retirada");
 
       aguardar(1000);
     }
 
     estadoSistema = "Aguardando objeto";
-
-  } else {
-    // ---------- Nenhum objeto ----------
-    estadoSistema = "Aguardando objeto";
     mostrarOled("DESCARTE AQUI", "Aguardando", "objeto...", nullptr);
+    // Nova passagem apenas apos a entrada ficar livre por 100 ms.
+    inicioIrLivreMs = 0;
+    metalVisto = false;  // Descarta leituras antigas durante o ciclo.
   }
 
-  aguardar(300);
+  delay(1);
 }

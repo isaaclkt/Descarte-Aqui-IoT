@@ -42,8 +42,10 @@ Instalacao da unica dependencia (so nesta maquina, nao no projeto):
 """
 
 import argparse
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 try:
@@ -288,7 +290,17 @@ def main() -> None:
 
     if args.png:
         caminho_png = DESTINO / f"{args.dispositivo}.png"
-        qr.save(str(caminho_png), scale=10, border=4, dark=COR_VERDE)
+        # OneDrive pode impedir a abertura direta de um PNG ja existente.
+        # Gera em um arquivo novo e troca o antigo somente apos salvar tudo.
+        with tempfile.NamedTemporaryFile(
+            dir=DESTINO, prefix=f".{args.dispositivo}-", suffix=".png", delete=False
+        ) as temporario:
+            caminho_temporario = Path(temporario.name)
+        try:
+            qr.save(str(caminho_temporario), scale=10, border=4, dark=COR_VERDE)
+            os.replace(caminho_temporario, caminho_png)
+        finally:
+            caminho_temporario.unlink(missing_ok=True)
         print(f"  {caminho_png.relative_to(RAIZ)}")
 
     print()
