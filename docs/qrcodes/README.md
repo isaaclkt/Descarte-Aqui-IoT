@@ -13,16 +13,14 @@ nenhum tamanho.
 
 ## ⚠ Antes de imprimir, leia isto
 
-**O QR Code carrega o endereço de uma rede específica.** O arquivo que está
-aqui aponta para:
+**O QR Code carrega o endereço de uma rede específica** — o IP que a máquina de
+quem gerou por último tinha naquela rede, e o caminho do site nela. Em outro
+lugar, na PUCPR ou na casa de outro integrante, o celular não alcança esse
+endereço e a etiqueta impressa não serve para nada.
 
-```
-http://192.168.100.107/descarte-aqui/php/iot/publico/descartar.php?d=esp32-pucpr
-```
-
-Esse `192.168.100.107` é o IP que a máquina de quem gerou tinha **naquela
-rede**. Em outro lugar — na PUCPR, na casa de outro integrante — o celular não
-vai alcançar esse endereço e a etiqueta impressa não serve para nada.
+Por isso o arquivo versionado muda de endereço toda vez que alguém regenera, e
+não adianta anotar o IP aqui. Para ver para onde o arquivo de agora aponta,
+escaneie com o próprio celular.
 
 Então este arquivo existe para vocês **verem como ficou** e conferirem o
 layout, não para imprimir e colar em definitivo.
