@@ -578,6 +578,12 @@ banco com `Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql` e depois
 
 ### O QR Code do equipamento
 
+> **Quer só ver funcionando na sua máquina?** O passo a passo completo, do
+> ponto de acesso ao descarte com os pontos caindo na conta, está em
+> [`docs/configurar-hotspot.md`](docs/configurar-hotspot.md). Os arquivos
+> gerados ficam em [`docs/qrcodes/`](docs/qrcodes/) — leia o README de lá antes
+> de imprimir, porque o QR carrega o IP de uma rede específica.
+
 Depois que o dispositivo estiver cadastrado no banco:
 
 ```bash

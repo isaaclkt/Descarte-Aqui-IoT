@@ -17,6 +17,6 @@ src/config_wifi.h
 src/config_backend.h
 backend/config.php
 
-# QR Codes gerados: dependem do endereco do site, que muda de rede para rede.
-# Regere com  python tools/gerar_qrcode.py  em vez de versionar um que vence.
-docs/qrcodes/
+# docs/qrcodes/ E versionado de proposito: os colegas precisam ver a etiqueta
+# sem montar o ambiente inteiro. Lembre que o QR carrega o IP de UMA rede -
+# veja docs/qrcodes/README.md antes de imprimir.
