@@ -16,6 +16,19 @@ sempre o mesmo e o celular está, por definição, na mesma rede.
 
 ---
 
+## Passo 0 — Atualizar os dois repositórios
+
+Antes de qualquer coisa, em **cada** um dos dois repositórios:
+
+```bash
+git pull
+```
+
+Não pule. Uma cópia antiga do repositório **Web** derruba o fluxo inteiro de um
+jeito que parece bug do projeto: o login termina na página inicial em vez da
+página do equipamento, e o "Criar conta" volta para o formulário sem dizer
+nada. Era assim que o código estava há alguns commits; já está corrigido.
+
 ## Passo 1 — Ligar o ponto de acesso no Windows
 
 `Configurações` → `Rede e Internet` → `Ponto de acesso móvel`.
@@ -169,6 +182,9 @@ tela do celular vira para *Descarte registrado*, com os pontos.
 | Página abre mas diz "Equipamento não encontrado" | o dispositivo não está na tabela `dispositivo` |
 | QR abre endereço que não responde | o IP mudou; gere o QR de novo |
 | Tela fica esperando para sempre | nem a placa nem o simulador estão rodando |
+| Login leva para a página inicial, não para o equipamento | repositório Web desatualizado — `git pull` (passo 0) |
+| "Criar conta" volta para o formulário sem mensagem | repositório Web desatualizado — `git pull` (passo 0) |
+| "Criar conta" acusa e-mail ou CPF em uso | a conta já existe; é só entrar com ela |
 
 ## Se o ponto de acesso não estiver disponível
 
