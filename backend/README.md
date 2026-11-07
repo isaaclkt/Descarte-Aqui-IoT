@@ -80,6 +80,21 @@ Rode a migração uma vez só: MySQL e MariaDB não aceitam
 `ADD COLUMN IF NOT EXISTS`. O bloco de rollback está comentado no fim do
 arquivo `.sql`.
 
+> **Rode pela linha de comando, não pelo phpMyAdmin.** O script do site define
+> as functions dentro de um bloco `DELIMITER $$`, e ferramenta que não entende
+> `DELIMITER` aborta ali. As tabelas, que vêm antes, ficam de pé; as functions,
+> os dados, as views, as procedures e os triggers, que vêm depois, não entram.
+> O banco fica pela metade sem acusar erro nenhum.
+
+Confira se entrou tudo:
+
+```bash
+php ferramentas/conferir-banco.php
+```
+
+Ele só lê. Lista item por item o que existe e o que falta, e diz qual script
+rodar para cada coisa que faltou.
+
 ### 2.2 Configuração
 
 ```bash

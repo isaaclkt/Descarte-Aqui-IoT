@@ -128,6 +128,19 @@ mysql -u root descarteaqui < backend/sql/01_integracao_iot.sql
 3. rodar o `INSERT` do dispositivo que o passo 3 imprimiu;
 4. ligar **Apache** e **MySQL** no painel do XAMPP.
 
+Monte o banco pela **linha de comando**. Pelo phpMyAdmin a importação costuma
+parar no meio: o script define functions num bloco `DELIMITER $$`, e o que vem
+depois — inclusive os tipos de pilha — não entra. As tabelas ficam lá, então
+parece que deu certo.
+
+Antes de ir para o celular, confirme:
+
+```bash
+php backend/ferramentas/conferir-banco.php
+```
+
+Ele só lê o banco e diz, item por item, o que falta e qual script resolve.
+
 ## Passo 6 — Liberar a porta 80 no Firewall
 
 Quando o Apache sobe pela primeira vez, o Windows pergunta se pode liberar.
@@ -180,6 +193,7 @@ tela do celular vira para *Descarte registrado*, com os pontos.
 | ESP32 não acha a rede | ponto de acesso em 5 GHz; mude para 2,4 GHz |
 | Celular não abre a página, o notebook abre | Firewall na porta 80, ou perfil de rede diferente |
 | Página abre mas diz "Equipamento não encontrado" | o dispositivo não está na tabela `dispositivo` |
+| Página abre mas diz "Nenhum tipo de pilha cadastrado" | banco importado pela metade — rode `php backend/ferramentas/conferir-banco.php` |
 | QR abre endereço que não responde | o IP mudou; gere o QR de novo |
 | Tela fica esperando para sempre | nem a placa nem o simulador estão rodando |
 | Login leva para a página inicial, não para o equipamento | repositório Web desatualizado — `git pull` (passo 0) |
