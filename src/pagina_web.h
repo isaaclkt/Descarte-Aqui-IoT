@@ -1260,8 +1260,8 @@ body {
     <h2>Fluxo de funcionamento</h2>
     <ol>
       <li><button class="flow__step" type="button" data-stage="entrada"><span class="flow__num">1</span><span><span class="flow__title">Entrada</span><span class="flow__sub">Pilha inserida na abertura</span></span></button></li>
-      <li><button class="flow__step" type="button" data-stage="sensor1"><span class="flow__num">2</span><span><span class="flow__title">Sensor 1</span><span class="flow__sub">Detecta a presença</span></span></button></li>
-      <li><button class="flow__step" type="button" data-stage="sensor2"><span class="flow__num">3</span><span><span class="flow__title">Sensor 2</span><span class="flow__sub">Lê o tipo de objeto</span></span></button></li>
+      <li><button class="flow__step" type="button" data-stage="sensor1"><span class="flow__num">2</span><span><span class="flow__title">Sensor 1</span><span class="flow__sub">Registra se passou metal</span></span></button></li>
+      <li><button class="flow__step" type="button" data-stage="sensor2"><span class="flow__num">3</span><span><span class="flow__title">Sensor 2</span><span class="flow__sub">Confirma a chegada</span></span></button></li>
       <li><button class="flow__step" type="button" data-stage="esp32"><span class="flow__num">4</span><span><span class="flow__title">Identificação</span><span class="flow__sub">ESP32 decide o destino</span></span></button></li>
       <li><button class="flow__step" type="button" data-stage="servo"><span class="flow__num">5</span><span><span class="flow__title">Servo</span><span class="flow__sub">Inclina a bandeja defletora</span></span></button></li>
       <li class="flow__split">
@@ -1390,7 +1390,7 @@ const COMPONENTS = {
   esp32: {
     label: 'ESP32', side: 'right', distance: 0.85, stage: 4,
     title: 'ESP32 · identificação',
-    text: 'Lê os dois sensores e a célula de carga, decide entre pilha e rejeição, comanda o servo e atualiza o OLED. Futuramente envia os dados ao site.'
+    text: 'Lê os dois sensores e a célula de carga, decide entre pilha e rejeição, comanda o servo e atualiza o OLED. Numa task própria, no core 0, também conversa com o site: recebe a autorização aberta pelo QR Code e envia o peso para creditar os pontos. Se o site estiver fora do ar, tudo acima continua funcionando.'
   },
   servo: {
     label: 'Servo', side: 'left', distance: 0.75, stage: 5,
@@ -1415,7 +1415,7 @@ const COMPONENTS = {
   portinha: {
     label: 'Portinha + servo', side: 'right', outside: true, distance: 0.8,
     title: 'Portinha de devolução',
-    text: 'Portinha articulada por uma dobradiça superior, movida por um servo no GPIO 26 entre 0° (fechada) e 90° (aberta). No ciclo automático ela abre por 5 segundos fixos quando o objeto não é metálico, e também aceita comando pela rota /atuador.'
+    text: 'Portinha articulada por uma dobradiça superior, movida por um servo no GPIO 26 entre 170° (fechada) e 10° (aberta). No ciclo automático ela abre assim que o objeto não metálico é desviado e só fecha depois que o ultrassônico vê a mão se afastar — não há prazo fixo, justamente para não fechar sobre a pessoa. Também aceita comando pela rota /atuador.'
   },
   celula: {
     label: 'Célula de carga + HX711', short: 'Célula de carga', side: 'left', distance: 0.85,
@@ -2875,12 +2875,12 @@ function doorStatus() {
       return isOpen
         ? ['Portinha aberta', vindoDeComando
             ? 'Aberta por comando da página de controle. O ESP32 confirmou o movimento do servo.'
-            : 'O firmware mantém a portinha aberta por 5 segundos fixos para a retirada do objeto.']
+            : 'O firmware mantém a portinha aberta até o ultrassônico confirmar que a mão se afastou.']
         : ['Abrindo a portinha', 'O ESP32 comandou a abertura do servo no GPIO 26.'];
     }
     return isClosed
       ? ['Portinha fechada', 'Aguardando o próximo objeto não metálico.']
-      : ['Fechando a portinha', 'O tempo de abertura terminou e o servo está fechando a portinha.'];
+      : ['Fechando a portinha', 'A retirada foi confirmada e o servo está fechando a portinha.'];
   }
 
   if (rejectDoor.detecting) {
@@ -3323,19 +3323,25 @@ const SERVO_CURSO = 70;
 // src/main.cpp. Estado que nao estiver aqui cai no 'aguardando' e o modelo
 // fica parado enquanto a maquina trabalha.
 //
-// O segundo ultrassonico trocou o antigo 'Porta aberta', de tempo fixo, por
-// quatro estados: a porta so abre quando o objeto chega ao compartimento e so
-// fecha quando a retirada e confirmada (ou quando o prazo estoura).
+// O firmware e a FONTE DA VERDADE: as chaves abaixo sao copia literal dos
+// estadoSistema de src/main.cpp. Ja houve divergencia aqui - a retirada do
+// nao-metal passou a ser guiada pela mao (HC-SR04) e os nomes antigos
+// ('Aguardando nao-metal', 'Retire o objeto', 'Objeto retirado') ficaram
+// para tras, deixando o modelo parado durante toda essa fase. Ao mexer nos
+// estados do firmware, mexa aqui e em tools/simular_esp32.py na mesma
+// passada.
+//
+// No caminho do nao-metal a porta abre assim que o desvio termina e so fecha
+// depois que a mao e vista e se afasta - nao ha prazo fixo.
 const TELA_POR_ESTADO = {
   'Iniciando': 'aguardando',
   'Aguardando objeto': 'aguardando',
   'Separando metal': 'pilha',
   'Pesando': 'pesagem',
   'Separando nao-metal': 'rejeitado',
-  'Aguardando nao-metal': 'rejeitado',
-  'Retire o objeto': 'rejeitado',
-  'Objeto retirado': 'rejeitado',
-  'Retirada nao confirmada': 'rejeitado'
+  'Aguardando mao': 'rejeitado',
+  'Mao detectada': 'rejeitado',
+  'Mao retirada': 'rejeitado'
 };
 
 const ETAPA_POR_ESTADO = {
@@ -3344,19 +3350,17 @@ const ETAPA_POR_ESTADO = {
   'Separando metal': 'servo',
   'Pesando': 'pilhas',
   'Separando nao-metal': 'servo',
-  'Aguardando nao-metal': 'rejeicao',
-  'Retire o objeto': 'rejeicao',
-  'Objeto retirado': null,
-  'Retirada nao confirmada': null
+  'Aguardando mao': 'rejeicao',
+  'Mao detectada': 'rejeicao',
+  'Mao retirada': null
 };
 
 // Estados do caminho nao-metal: acendem o alerta do anel.
 const ESTADOS_NAO_METAL = [
   'Separando nao-metal',
-  'Aguardando nao-metal',
-  'Retire o objeto',
-  'Objeto retirado',
-  'Retirada nao confirmada'
+  'Aguardando mao',
+  'Mao detectada',
+  'Mao retirada'
 ];
 
 // Embutido = dentro do iframe da pagina de controle. Nesse caso nao fazemos

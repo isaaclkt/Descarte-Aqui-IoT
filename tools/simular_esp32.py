@@ -55,8 +55,8 @@ CONFIG_BACKEND = RAIZ / "src" / "config_backend.h"
 # Os mesmos tempos de src/main.cpp.
 TEMPO_ESPERA = 4.0
 TEMPO_ESTABILIZACAO = 3.0
-TEMPO_CHEGADA_NAO_METAL = 2.5      # quanto o "objeto" demora a cair no compartimento
-TEMPO_ATE_RETIRADA = 4.0           # quanto o "usuario" demora a retirar
+TEMPO_ATE_MAO = 4.0                # quanto o "usuario" demora a levar a mao
+CONFIRMACAO_RETIRADA = 1.5         # CONFIRMACAO_RETIRADA_MS: abertura livre ate fechar
 
 MAC_SIMULADO = "A0:B7:65:00:00:01"
 FIRMWARE = "0.2.0-sim"
@@ -451,29 +451,35 @@ def _caminho_nao_metal(disp: Dispositivo) -> None:
     avisar_etapa(disp, "separando")
     time.sleep(TEMPO_ESPERA)
 
-    # controlarRetiradaNaoMetal(): espera o objeto chegar ao compartimento
+    # controlarRetiradaNaoMetal(): a porta abre JA, sem esperar o objeto
+    # chegar ao fundo, e so fecha depois que a mao e vista e se afasta.
     with disp.trava:
-        disp.estado = "Aguardando nao-metal"
+        disp.estado = "Aguardando mao"
         disp.controle_automatico_porta = True
-    disp.registrar("INFO", "NAO-METAL", "Aguardando deteccao pelo ultrassonico 2 (GPIO 33).")
-    time.sleep(TEMPO_CHEGADA_NAO_METAL)
+        disp.porta_aberta = True
+    disp.registrar("INFO", "NAO-METAL",
+                   "Porta aberta; aguardando mao no ultrassonico 2 (GPIO 33).")
+    avisar_etapa(disp, "porta_aberta")
+    time.sleep(TEMPO_ATE_MAO)
 
+    # Mao chega a menos de DISTANCIA_DETECCAO_2 (14 cm).
     with disp.trava:
         disp.distancia_nao_metal_cm = 3.0
         disp.objeto_nao_metal_presente = True
-        disp.estado = "Retire o objeto"
-        disp.porta_aberta = True
-    disp.registrar("INFO", "NAO-METAL", "Porta aberta a 3.0 cm. Retire o objeto.")
-    avisar_etapa(disp, "porta_aberta")
-    time.sleep(TEMPO_ATE_RETIRADA)
+        disp.estado = "Mao detectada"
+    disp.registrar("INFO", "NAO-METAL",
+                   "Mao detectada a 3.0 cm. Aguardando afastamento.")
+    time.sleep(CONFIRMACAO_RETIRADA)
 
+    # Abertura livre pelo tempo de confirmacao: so entao a porta fecha.
     with disp.trava:
         disp.distancia_nao_metal_cm = 20.0
         disp.objeto_nao_metal_presente = False
         disp.porta_aberta = False
         disp.controle_automatico_porta = False
-        disp.estado = "Objeto retirado"
-    disp.registrar("INFO", "NAO-METAL", "Objeto retirado. Porta fechada.")
+        disp.estado = "Mao retirada"
+    disp.registrar("INFO", "NAO-METAL",
+                   f"Abertura livre por {int(CONFIRMACAO_RETIRADA * 1000)} ms apos detectar mao; porta fechada.")
 
     concluir(disp, 0, False, "nao e pilha")
     time.sleep(1)
