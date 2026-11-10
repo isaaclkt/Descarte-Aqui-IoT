@@ -244,6 +244,12 @@ float medirDistanciaNaoMetal() {
 // Atualiza os dados do compartimento para o monitor serial e a rota /sensor.
 void atualizarSensorNaoMetal() {
   distanciaNaoMetalCm = medirDistanciaNaoMetal();
+  static bool semEco = false;
+  const bool falha = distanciaNaoMetalCm < 0;
+  if (falha != semEco) {
+    registrar(falha ? LOG_WARN : LOG_INFO, "HC-SR04", falha ? "Sem eco; leitura inconclusiva." : "Eco restabelecido.");
+    semEco = falha;
+  }
   objetoNaoMetalPresente = distanciaNaoMetalCm > 0 &&
                            distanciaNaoMetalCm <= DISTANCIA_DETECCAO_2;
   ultimaLeituraMs = millis();
@@ -307,7 +313,7 @@ bool controlarRetiradaNaoMetal() {
 
     if (agora - ultimoLogMs >= 5000) {
       ultimoLogMs = agora;
-      registrar(LOG_INFO, "NAO-METAL", "Porta aberta, mao_vista=%s, distancia=%.1f cm.",
+      Serial.printf("[NAO-METAL] Porta aberta, mao_vista=%s, distancia=%.1f cm.\n",
                 maoDetectada ? "SIM" : "NAO", (double) distanciaNaoMetalCm);
     }
     delay(INTERVALO_LEITURA_PORTA_MS);
@@ -332,6 +338,7 @@ void definirPorta(bool abrir) {
 
 // Move o servo de separacao e guarda a posicao.
 void definirSeparacao(int posicao) {
+  registrar(LOG_INFO, "ATUADOR", "Separacao -> %d graus (GPIO %d).", posicao, SERVO_SEPARACAO_PIN);
   posicaoServoSeparacao = posicao;
   servoSeparacao.write(posicao);
 }
@@ -671,6 +678,32 @@ void rotaLogs() {
   enviarJson(200, registroJson());
 }
 
+void rotaLogsHistorico() {
+  unsigned valores[2] = {0, 20};
+  const char *nomes[2] = {"offset", "limite"};
+  for (int i = 0; i < 2; ++i) {
+    if (!server.hasArg(nomes[i])) continue;
+    String arg = server.arg(nomes[i]);
+    if (arg.isEmpty() || arg.length() > 5) {
+      enviarJson(400, "{\"erro\":\"paginacao invalida\"}"); return;
+    }
+    unsigned n = 0;
+    for (unsigned k = 0; k < arg.length(); ++k) {
+      if (arg[k] < '0' || arg[k] > '9') {
+        enviarJson(400, "{\"erro\":\"paginacao invalida\"}"); return;
+      }
+      n = n * 10 + arg[k] - '0';
+    }
+    valores[i] = n;
+  }
+  if (valores[0] > 10000 || valores[1] < 1 || valores[1] > 20) {
+    enviarJson(400, "{\"erro\":\"offset 0..10000, limite 1..20\"}"); return;
+  }
+  String resposta;
+  int codigo = registroHistoricoJson(valores[0], valores[1], resposta);
+  enviarJson(codigo, resposta);
+}
+
 void rotaNaoEncontrada() {
   registrarRequisicao();
   enviarJson(404, "{\"ok\":false,\"erro\":\"rota nao encontrada\"}");
@@ -789,6 +822,7 @@ void setup() {
   server.on("/rede", HTTP_GET, rotaRede);
   server.on("/descarte", HTTP_GET, rotaDescarte);
   server.on("/logs", HTTP_GET, rotaLogs);
+  server.on("/logs/historico", HTTP_GET, rotaLogsHistorico);
   server.onNotFound(rotaNaoEncontrada);
 
   server.begin();
