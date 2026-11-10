@@ -34,7 +34,9 @@ $dispositivo = null;
 $pilhas = [];
 $sessaoAberta = null;
 
-// Preenchidos so no caminho do coletor.
+// Endereco da pagina que o proprio equipamento serve. O coletor usa para
+// monitorar; o cidadao, so para abrir a portinha quando algo ficou preso.
+// Nunca sai para quem nao esta logado.
 $monitoramentoUrl = null;
 $monitoramentoMesmaRede = false;
 $segundosSemContato = null;
@@ -61,7 +63,7 @@ try {
         }
     }
 
-    if ($erro === null && $coletorId !== null) {
+    if ($erro === null && ($coletorId !== null || $usuarioId !== null)) {
         $monitoramentoUrl = monitoramento_url(
             $dispositivo['ultimo_ip'] ?? null,
             isset($dispositivo['ultimo_porta']) ? (int) $dispositivo['ultimo_porta'] : null
@@ -294,6 +296,33 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
                 <p><button class="iot-botao iot-botao--sec" id="iot-cancelar" type="button">Cancelar descarte</button></p>
             </div>
         </div>
+
+        <?php if ($monitoramentoUrl !== null): ?>
+        <div class="iot-card">
+            <p class="iot-eq"><strong>Ficou alguma coisa presa?</strong></p>
+            <p>
+                A portinha dos nao-metalicos abre sozinha quando o equipamento
+                devolve um objeto. Se ela nao abriu, ou se algo ficou preso, voce
+                mesmo pode abrir pela pagina do equipamento — sem precisar
+                chamar ninguem.
+            </p>
+            <?php if (!$monitoramentoMesmaRede): ?>
+                <p class="iot-aviso">
+                    Seu aparelho parece estar em outra rede. Essa pagina fica
+                    dentro do proprio equipamento, entao so abre para quem esta
+                    na mesma rede Wi-Fi que ele.
+                </p>
+            <?php endif; ?>
+            <p><a class="iot-botao iot-botao--sec" href="<?= escapar($monitoramentoUrl) ?>" rel="noreferrer">Abrir a portinha</a></p>
+            <p class="iot-eq">
+                O botao leva a pagina do equipamento, em
+                <?= escapar($monitoramentoUrl) ?>. La estao os comandos
+                <em>Abrir porta</em> e <em>Fechar porta</em>. Durante a
+                devolucao automatica o equipamento recusa o comando manual, para
+                nao fechar a porta com a mao dentro.
+            </p>
+        </div>
+        <?php endif; ?>
 
         <script>
         (function () {
