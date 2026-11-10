@@ -8,7 +8,18 @@ consulta os sensores e envia comandos para o atuador.
 TDE da disciplina **Conectividade em Sistemas Ciberfísicos** — Engenharia de
 Software, PUCPR.
 
-> **Integrantes da equipe:** _a preencher (nome completo + RA de cada membro)._
+**Integrantes da equipe — Grupo 4**
+
+| Nome completo | RA | Usuário GitHub |
+|---|---|---|
+| André Fochesatto | 40130997 | — |
+| Arthur Medeiros Diniz Azevedo | 40126823 | `arthurmedeiros0` |
+| Isaac de Lima Klimiont | 40132716 | `isaaclkt` |
+| Lucas Buzzi Lima | 40126429 | `Llucas-buzzi-lima` |
+| Luiz Felipe Rodrigues da Silva Souza | 40141767 | — |
+
+A coluna do usuário GitHub liga cada integrante ao histórico de commits deste
+repositório, que o regulamento do TDE avalia junto com a defesa individual.
 
 ---
 
@@ -646,7 +657,7 @@ Dois detalhes que costumam morder:
 
 ## 10. Próximas etapas
 
-- [ ] Preencher integrantes da equipe (nome + RA) neste README
+- [x] Preencher integrantes da equipe (nome + RA) neste README
 - [ ] Adicionar diagrama de blocos e esquemático em `docs/`
 - [ ] Calibrar a balança e fixar o `FATOR_CALIBRACAO` real
 - [ ] Adicionar fotos e vídeo da demonstração
