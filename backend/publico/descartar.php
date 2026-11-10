@@ -27,11 +27,17 @@ $prefixo = (string) ($GLOBALS['IOT_URL_SITE'] ?? '');
 
 $codigoDispositivo = trim((string) ($_GET['d'] ?? ''));
 $usuarioId = usuario_logado();
+$coletorId = coletor_logado();
 
 $erro = null;
 $dispositivo = null;
 $pilhas = [];
 $sessaoAberta = null;
+
+// Preenchidos so no caminho do coletor.
+$monitoramentoUrl = null;
+$monitoramentoMesmaRede = false;
+$segundosSemContato = null;
 
 try {
     expirar_sessoes();
@@ -40,7 +46,10 @@ try {
         $erro = 'Endereco invalido. Escaneie novamente o QR Code do equipamento.';
     } else {
         $dispositivo = consultar_linha(
-            'SELECT id, codigo, nome, ativo FROM dispositivo WHERE codigo = ? LIMIT 1',
+            'SELECT id, codigo, nome, ativo, firmware, mac, ultimo_ip,
+                    ultimo_contato_em,
+                    TIMESTAMPDIFF(SECOND, ultimo_contato_em, NOW()) AS sem_contato_s
+               FROM dispositivo WHERE codigo = ? LIMIT 1',
             's',
             [$codigoDispositivo]
         );
@@ -50,6 +59,14 @@ try {
         } elseif ((int) $dispositivo['ativo'] !== 1) {
             $erro = 'Este equipamento esta fora de operacao no momento.';
         }
+    }
+
+    if ($erro === null && $coletorId !== null) {
+        $monitoramentoUrl = monitoramento_url($dispositivo['ultimo_ip'] ?? null);
+        $monitoramentoMesmaRede = monitoramento_mesma_rede($dispositivo['ultimo_ip'] ?? null);
+        $segundosSemContato = $dispositivo['ultimo_contato_em'] === null
+            ? null
+            : (int) $dispositivo['sem_contato_s'];
     }
 
     if ($erro === null && $usuarioId !== null) {
@@ -80,10 +97,13 @@ try {
 // novo no meio do descarte. O instante vai junto para um codigo esquecido aqui
 // nao desviar um login comum feito dias depois; o login so aceita se for
 // recente. Quem monta o endereco de destino e o login, nunca esta pagina.
-if ($usuarioId === null && $dispositivo !== null) {
+// Vale tambem para o coletor: php/entrar-perfil.php le as mesmas duas chaves.
+if ($usuarioId === null && $coletorId === null && $dispositivo !== null) {
     $_SESSION['iot_dispositivo'] = $dispositivo['codigo'];
     $_SESSION['iot_dispositivo_em'] = time();
 }
+
+$titulo = $coletorId !== null ? 'Monitorar o equipamento' : 'Fazer um descarte';
 
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 ?>
@@ -92,7 +112,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Fazer um descarte | Descarte Aqui</title>
+    <title><?= escapar($titulo) ?> | Descarte Aqui</title>
     <meta name="description" content="Inicie um descarte no equipamento e receba seus pontos.">
     <meta name="theme-color" content="#04301A">
     <?php if ($dentroDoSite): ?>
@@ -136,7 +156,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 <body>
 <main class="iot-wrap">
 
-    <h1>Fazer um descarte</h1>
+    <h1><?= escapar($titulo) ?></h1>
 
     <?php if ($erro !== null): ?>
 
@@ -144,6 +164,70 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         <?php if ($dentroDoSite): ?>
             <p><a href="<?= $prefixo ?>index.html">Voltar ao inicio</a></p>
         <?php endif; ?>
+
+    <?php elseif ($coletorId !== null): ?>
+
+        <?php
+        // Caminho do coletor. A pagina de monitoramento NAO e refeita aqui:
+        // ela e servida pelo proprio ESP32, e este cartao so leva ate ela.
+        $ONLINE_S = 120;  // o firmware fala com o site a cada 3 s (ate 30 s em recuo)
+        $sem = $segundosSemContato === null ? null : max(0, $segundosSemContato);
+        $visto = $sem === null
+            ? 'nunca se comunicou com o site'
+            : ($sem < 60 ? "ha {$sem} s"
+               : ($sem < 3600 ? 'ha ' . intdiv($sem, 60) . ' min'
+                  : 'ha ' . intdiv($sem, 3600) . ' h'));
+        $online = $sem !== null && $sem <= $ONLINE_S;
+        ?>
+
+        <div class="iot-card">
+            <p class="iot-eq">Equipamento <strong><?= escapar($dispositivo['nome']) ?></strong></p>
+            <p>Voce entrou como <strong>coletor</strong>, entao aqui nao ha descarte a fazer.</p>
+
+            <p class="iot-eq">
+                Ultimo contato com o site: <strong><?= escapar($visto) ?></strong><?php
+                if ($dispositivo['firmware']) { echo ' · firmware ' . escapar($dispositivo['firmware']); }
+                if ($dispositivo['mac']) { echo ' · MAC ' . escapar($dispositivo['mac']); }
+                ?>
+            </p>
+
+            <?php if ($monitoramentoUrl === null): ?>
+
+                <p class="iot-aviso">
+                    O site ainda nao sabe o endereco deste equipamento na rede.
+                    O endereco e aprendido quando o equipamento se comunica com o
+                    site; ligue o equipamento, espere alguns segundos e recarregue.
+                </p>
+
+            <?php else: ?>
+
+                <?php if (!$online): ?>
+                    <p class="iot-aviso">
+                        O equipamento nao fala com o site <?= escapar($visto) ?>.
+                        O endereco abaixo e o ultimo conhecido e pode ter mudado.
+                    </p>
+                <?php endif; ?>
+
+                <?php if (!$monitoramentoMesmaRede): ?>
+                    <p class="iot-aviso">
+                        Seu aparelho parece estar em outra rede. A pagina de
+                        monitoramento fica dentro do proprio equipamento, entao
+                        so abre para quem esta na mesma rede Wi-Fi que ele.
+                    </p>
+                <?php endif; ?>
+
+                <p><a class="iot-botao" href="<?= escapar($monitoramentoUrl) ?>" rel="noreferrer">Abrir o monitoramento</a></p>
+                <p class="iot-eq">
+                    A pagina e servida pelo proprio equipamento, em
+                    <?= escapar($monitoramentoUrl) ?> — ela nao passa por este site.
+                </p>
+
+            <?php endif; ?>
+
+            <?php if ($dentroDoSite): ?>
+                <p><a class="iot-botao iot-botao--sec" href="<?= $prefixo ?>php/area-coletor.php">Ir para a area do coletor</a></p>
+            <?php endif; ?>
+        </div>
 
     <?php elseif ($usuarioId === null): ?>
 
@@ -153,6 +237,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
             <?php if ($dentroDoSite): ?>
                 <p><a class="iot-botao" href="<?= $prefixo ?>paginas/entrar.html">Entrar na minha conta</a></p>
                 <p><a class="iot-botao iot-botao--sec" href="<?= $prefixo ?>paginas/cadastro.html">Criar uma conta</a></p>
+                <p><a class="iot-botao iot-botao--sec" href="<?= $prefixo ?>php/entrar-perfil.php?perfil=coletor">Entrar como coletor</a></p>
             <?php endif; ?>
             <p class="iot-eq">Assim que entrar, você volta direto para esta tela.</p>
         </div>

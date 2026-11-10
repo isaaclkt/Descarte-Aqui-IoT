@@ -315,6 +315,91 @@ function usuario_logado(): ?int
 }
 
 /**
+ * Id do coletor logado, ou null.
+ *
+ * Mesma leitura de usuario_logado(), so que para o perfil 'coletor', criado
+ * por php/entrar-perfil.php. Quem escaneia o QR Code com uma conta de coletor
+ * nao vai fazer um descarte: vai ver como o equipamento esta.
+ *
+ * Nao e um login novo nem um segundo sistema de autenticacao: le a sessao que
+ * o site criou. Quem decide quem e coletor e o banco, na tabela coletor, no
+ * momento do login - nunca o dominio do e-mail nem nada do lado do cliente.
+ */
+function coletor_logado(): ?int
+{
+    if (empty($_SESSION['user_id']) || ($_SESSION['user_role'] ?? '') !== 'coletor') {
+        return null;
+    }
+
+    return (int) $_SESSION['user_id'];
+}
+
+/**
+ * O endereco da pagina de monitoramento servida pelo proprio ESP32, ou null.
+ *
+ * Ninguem configura esse endereco em lugar nenhum: o equipamento consulta
+ * /dispositivo/autorizacao.php a cada 3 s e o backend grava em dispositivo.
+ * ultimo_ip o IP de origem dessas consultas (marcar_contato_dispositivo()).
+ * E o IP que ele tem AGORA, na rede em que esta.
+ *
+ * Devolve null quando o valor gravado nao serve como endereco de navegacao:
+ * IP vazio, invalido ou nao-IPv4. Quem decide se da para alcancar dali e
+ * quem chama, com monitoramento_mesma_rede().
+ */
+function monitoramento_url(?string $ultimoIp): ?string
+{
+    $ip = trim((string) $ultimoIp);
+
+    if ($ip === '' || filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return null;
+    }
+
+    // O firmware sobe o servidor na porta 80, sem TLS: o ESP32 nao tem
+    // certificado e nem teria como ter um valido para um IP de rede local.
+    return 'http://' . $ip . '/';
+}
+
+/**
+ * O navegador de quem esta vendo a pagina parece estar na mesma rede do
+ * equipamento?
+ *
+ * A pagina de monitoramento e servida pelo proprio ESP32, entao o celular so
+ * abre se alcancar aquele IP. Compara o /24 do IP do equipamento com o de
+ * quem pediu esta pagina - os dois vistos pelo servidor do site.
+ *
+ * E um palpite, nao uma garantia: mascara diferente de /24, isolamento de
+ * clientes no roteador ou NAT no meio mudam a resposta. Serve para avisar
+ * antes de a pessoa tocar num link que nao vai abrir, nunca para bloquear.
+ */
+function monitoramento_mesma_rede(?string $ultimoIp): bool
+{
+    $ip = trim((string) $ultimoIp);
+    $cliente = ip_cliente();
+
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return false;
+    }
+
+    // Tudo na mesma maquina (XAMPP de bancada, simulador): alcanca.
+    $loopbackEquipamento = str_starts_with($ip, '127.');
+    $loopbackCliente = str_starts_with($cliente, '127.') || $cliente === '::1';
+    if ($loopbackEquipamento || $loopbackCliente) {
+        return $loopbackEquipamento && $loopbackCliente;
+    }
+
+    if (filter_var($cliente, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+        return false;
+    }
+
+    $rede = static function (string $endereco): string {
+        $partes = explode('.', $endereco);
+        return $partes[0] . '.' . $partes[1] . '.' . $partes[2];
+    };
+
+    return $rede($ip) === $rede($cliente);
+}
+
+/**
  * Para rotas JSON: exige cidadao logado ou responde 401.
  */
 function exigir_cidadao_json(): int
