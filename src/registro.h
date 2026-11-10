@@ -5,7 +5,8 @@
    tempo:
 
      1) o Serial, como ja era feito com Serial.printf;
-     2) um buffer circular na memoria, servido pela rota GET /logs.
+     2) um buffer circular na memoria, servido pela rota GET /logs;
+     3) fila limitada para LittleFS, servido por GET /logs/historico.
 
    O (2) existe por causa do TDE: "registro de eventos e erros" precisa
    poder ser consultado pela rede, nao so por quem esta com o cabo USB na
@@ -29,11 +30,11 @@ enum NivelLog {
   LOG_ERRO
 };
 
-// Quantas linhas ficam guardadas. 40 x 112 bytes ~= 4,4 KB de RAM.
+// Quantas linhas ficam guardadas (mais metadados de tempo e origem).
 #define REGISTRO_CAPACIDADE 40
 #define REGISTRO_TAMANHO_LINHA 112
 
-// Prepara o mutex. Chame no inicio do setup(), antes de qualquer registrar().
+// Prepara mutex, fila e task de persistencia. Chame uma vez no inicio do setup().
 void registroIniciar();
 
 // Grava uma linha. Formato igual ao do printf.
@@ -41,5 +42,8 @@ void registrar(NivelLog nivel, const char *origem, const char *formato, ...);
 
 // Buffer inteiro como array JSON, do mais antigo para o mais recente.
 String registroJson();
+
+// Consulta assincrona: repetir os mesmos parametros quando retornar 202.
+int registroHistoricoJson(unsigned offset, unsigned limite, String &resposta);
 
 #endif  // REGISTRO_H

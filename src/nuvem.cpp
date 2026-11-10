@@ -239,10 +239,19 @@ bool consultarAutorizacao() {
   const int codigo = requisicao(url, false, "", resposta);
   anotarResultadoHttp(codigo);
 
+  static bool falhando = false;
+  static unsigned long ultimoAviso = 0;
   if (codigo != 200) {
-    registrar(LOG_WARN, "NUVEM", "Consulta de autorizacao falhou (HTTP %d).", codigo);
+    if (!falhando || millis() - ultimoAviso >= 60000) {
+      registrar(LOG_WARN, "NUVEM", "Consulta de autorizacao falhou (HTTP %d).", codigo);
+      ultimoAviso = millis();
+    }
+    falhando = true;
     return false;
   }
+
+  if (falhando) registrar(LOG_INFO, "NUVEM", "Consulta de autorizacao restabelecida.");
+  falhando = false;
 
   char sessao[33] = "";
   const bool temSessao = extrairTexto(resposta, "sessao", sessao, sizeof(sessao));
@@ -281,12 +290,11 @@ bool consultarAutorizacao() {
     estado.sessao = SESSAO_AUTORIZADA;
   }
 
-  const char *pilha = estado.pilhaNome;
   const int segundos = estado.segundosRestantes;
   destravar();
 
   if (novaSessao) {
-    registrar(LOG_INFO, "NUVEM", "Autorizacao recebida: %s, %d s para descartar.", pilha, segundos);
+    registrar(LOG_INFO, "NUVEM", "Autorizacao recebida; %d s para descartar.", segundos);
   }
 
   return true;
@@ -421,7 +429,7 @@ bool enviarConclusao() {
     if (creditado) {
       registrar(LOG_INFO, "NUVEM", "Descarte %d registrado: %d pontos creditados.", descarte, pontos);
     } else {
-      registrar(LOG_WARN, "NUVEM", "Descarte nao pontuou: %s", motivo[0] ? motivo : "recusado pelo backend");
+      registrar(LOG_WARN, "NUVEM", "Descarte recusado pelo backend; sem pontos.");
     }
 
     return true;
