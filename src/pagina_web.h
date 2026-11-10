@@ -76,13 +76,13 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
       <article class="cartao">
         <h3>Objeto presente</h3>
         <p class="valor" id="objeto-presente">--</p>
-        <p class="detalhe">Infravermelho (GPIO <span id="entrada-gpio">--</span>) · <span id="entrada-armada">--</span></p>
+        <p class="detalhe">Infravermelho (GPIO <span id="confirmacao-gpio">--</span>) · <span id="confirmacao-armada">--</span></p>
       </article>
 
       <article class="cartao">
         <h3>Material</h3>
         <p class="valor" id="metal">--</p>
-        <p class="detalhe">Indutivo (GPIO 32) · metal recente: <span id="metal-recente">--</span></p>
+        <p class="detalhe">Indutivo na boca (GPIO <span id="entrada-gpio">--</span>) · metal recente: <span id="metal-recente">--</span></p>
       </article>
 
       <article class="cartao">
@@ -645,12 +645,16 @@ function aplicarStatus(status) {
 
 function aplicarSensor(sensor) {
   ultimoSensor = sensor;
-  // A entrada e um E18-D80NK: ele diz presente ou ausente, nao distancia.
-  // "armado" conta: enquanto o feixe nao liberar, um objeto novo nao inicia
-  // outro ciclo, e e isso que explica um objeto que parece ter sido ignorado.
+  // Dois sensores, nesta ordem: o indutivo na boca diz se passou metal, e o
+  // infravermelho logo abaixo confirma a chegada e inicia o ciclo. A ordem e
+  // o que classifica - por isso os dois aparecem aqui.
+  //
+  // "armado" conta: enquanto o feixe do IR nao liberar, um objeto novo nao
+  // inicia outro ciclo, e e isso que explica um objeto que pareceu ignorado.
   el("entrada-gpio").textContent = sensor.sensor_entrada_gpio;
-  el("entrada-armada").textContent =
-    sensor.entrada_armada ? "pronto" : "feixe bloqueado";
+  el("confirmacao-gpio").textContent = sensor.sensor_confirmacao_gpio;
+  el("confirmacao-armada").textContent =
+    sensor.confirmacao_armada ? "pronto" : "feixe bloqueado";
 
   el("objeto-presente").textContent = sensor.objeto_presente ? "Sim" : "Nao";
   el("metal").textContent = sensor.metal_detectado ? "Metal (pilha)" : "Nao metal";
@@ -1375,13 +1379,13 @@ const COMPONENTS = {
   },
   sensor1: {
     label: 'Sensor 1', side: 'right', distance: 0.75, stage: 2,
-    title: 'Sensor 1 · presença (E18-D80NK)',
-    text: 'Sensor infravermelho de barreira refletiva no GPIO 19, no lugar do ultrassônico que ficava aqui. Não mede distância: a saída vai a nível baixo enquanto houver objeto na frente, e é essa transição que dispara o ciclo de separação. O corpo desenhado aqui ainda é o do ultrassônico antigo — o modelo 3D não foi refeito.'
+    title: 'Sensor 1 · metal (indutivo)',
+    text: 'Sensor indutivo no GPIO 32, na boca da lixeira. É o primeiro do caminho: registra que passou metal, mas não inicia nada sozinho. Quem inicia o ciclo é o infravermelho logo abaixo — e é a ordem entre os dois que classifica o objeto. Metal registrado pouco antes da chegada ao infravermelho significa pilha. O corpo desenhado aqui é o do ultrassônico antigo; o modelo 3D não foi refeito.'
   },
   sensor2: {
     label: 'Sensor 2', side: 'right', distance: 0.8, stage: 3,
-    title: 'Sensor 2 · identificação',
-    text: 'Sensor indutivo cilíndrico apontado para o objeto parado sobre a bandeja. Confirma se ele tem o corpo metálico de uma pilha.'
+    title: 'Sensor 2 · chegada (E18-D80NK)',
+    text: 'Infravermelho de barreira refletiva no GPIO 19, apontado para a bandeja. Não mede distância nem identifica material: a saída vai a nível baixo enquanto houver objeto na frente, e é essa transição que dispara o ciclo de separação. Depois de um objeto, só rearma quando o feixe fica livre por 100 ms. O corpo desenhado aqui é o cilindro do indutivo; o modelo 3D não foi refeito.'
   },
   esp32: {
     label: 'ESP32', side: 'right', distance: 0.85, stage: 4,
@@ -2274,7 +2278,7 @@ function buildSensors(mat) {
     addBox(sensor1, [0.024, 0.032, 0.032], mat.blackPlastic, [sx * 0.077, SENSOR1_Y, FLOW_Z]);
     addMesh(sensor1, new THREE.SphereGeometry(0.008, 16, 12), sx < 0 ? emitterLed : standard(0x0e1a24, 0.15, 0.2), [sx * 0.064, SENSOR1_Y, FLOW_Z]);
   }
-  const boardTexture = createSmallBoardTexture('#1d4ea3', 'E18-D80NK');
+  const boardTexture = createSmallBoardTexture('#1d4ea3', 'INDUTIVO');
   const board = new THREE.MeshStandardMaterial({ map: boardTexture, roughness: 0.5 });
   addBox(sensor1, [0.085, 0.045, 0.004], [mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, board, mat.pcbBlue], [0.035, SENSOR1_Y, -0.032]);
   const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xff4a4a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -3400,13 +3404,14 @@ function detalheAoVivo(key) {
   const s = esp32.status;
   const n = esp32.sensor;
   if (key === 'sensor1') {
-    const estado = n.objeto_presente ? 'objeto presente' : 'via livre';
-    const armado = n.entrada_armada ? 'pronto para o próximo' : 'feixe ainda bloqueado';
-    return `Agora: ${estado} · ${armado}.`;
+    return n.metal_recente
+      ? 'Agora: metal passou pela boca há instantes.'
+      : 'Agora: nenhum metal registrado na janela.';
   }
   if (key === 'sensor2') {
-    if (!n.objeto_presente) return 'Agora: sem objeto sobre a bandeja.';
-    return `Agora: ${n.metal_detectado ? 'metal detectado' : 'não metálico'}.`;
+    const estado = n.objeto_presente ? 'objeto presente' : 'via livre';
+    const armado = n.confirmacao_armada ? 'pronto para o próximo' : 'feixe ainda bloqueado';
+    return `Agora: ${estado} · ${armado}.`;
   }
   if (key === 'celula') {
     return s.balanca_ok

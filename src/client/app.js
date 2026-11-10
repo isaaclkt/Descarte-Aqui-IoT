@@ -102,12 +102,16 @@ function aplicarStatus(status) {
 
 function aplicarSensor(sensor) {
   ultimoSensor = sensor;
-  // A entrada e um E18-D80NK: ele diz presente ou ausente, nao distancia.
-  // "armado" conta: enquanto o feixe nao liberar, um objeto novo nao inicia
-  // outro ciclo, e e isso que explica um objeto que parece ter sido ignorado.
+  // Dois sensores, nesta ordem: o indutivo na boca diz se passou metal, e o
+  // infravermelho logo abaixo confirma a chegada e inicia o ciclo. A ordem e
+  // o que classifica - por isso os dois aparecem aqui.
+  //
+  // "armado" conta: enquanto o feixe do IR nao liberar, um objeto novo nao
+  // inicia outro ciclo, e e isso que explica um objeto que pareceu ignorado.
   el("entrada-gpio").textContent = sensor.sensor_entrada_gpio;
-  el("entrada-armada").textContent =
-    sensor.entrada_armada ? "pronto" : "feixe bloqueado";
+  el("confirmacao-gpio").textContent = sensor.sensor_confirmacao_gpio;
+  el("confirmacao-armada").textContent =
+    sensor.confirmacao_armada ? "pronto" : "feixe bloqueado";
 
   el("objeto-presente").textContent = sensor.objeto_presente ? "Sim" : "Nao";
   el("metal").textContent = sensor.metal_detectado ? "Metal (pilha)" : "Nao metal";

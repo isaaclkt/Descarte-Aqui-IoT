@@ -80,13 +80,31 @@ HX711 balanca;
 #define ZERO_BRUTO 253944.0
 #define FATOR_CALIBRACAO 122.04318
 
-// Sensor infravermelho E18-D80NK na entrada (substitui HC-SR04 1)
+// --- Ordem fisica no caminho de queda -------------------------------------
+//
+//   1) SENSOR_METAL   (indutivo, GPIO 32) na BOCA da lixeira
+//   2) SENSOR_IR_CONFIRMACAO (E18-D80NK, GPIO 19) logo abaixo, sobre a bandeja
+//
+// A ordem e o que classifica. O indutivo so diz "passou metal"; quem diz
+// "um objeto chegou e o ciclo comeca agora" e o infravermelho. Se o indutivo
+// acusou metal nos instantes anteriores a passagem pelo IR, e PILHA; se o IR
+// disparou sem esse registro, e NAO PILHA.
+//
+// Por isso o indutivo precisa estar FISICAMENTE ANTES do infravermelho. Com
+// os dois trocados de lugar, o IR dispara primeiro, o indutivo ainda nao viu
+// nada, e toda pilha e classificada como nao-pilha.
+//
+// Os pinos nao dependem da posicao: cada sensor levou a sua fiacao ao mudar
+// de lugar no chassi.
+// --------------------------------------------------------------------------
+
+// Infravermelho E18-D80NK: confirma que o objeto chegou e inicia o ciclo.
 // NPN coletor aberto, com resistor externo de 10k para 3,3V no GPIO19.
 // LOW significa objeto detectado (confirme com teste do seu modulo).
-#define SENSOR_IR_ENTRADA 19
+#define SENSOR_IR_CONFIRMACAO 19
 #define IR_NIVEL_DETECCAO LOW
 #define TEMPO_REARME_IR_MS 100
-// Tempo maximo entre passar no indutivo (entrada) e atingir o IR.
+// Tempo maximo entre passar no indutivo (boca) e atingir o IR (bandeja).
 // Ajustar conforme a distancia fisica e a velocidade de queda.
 #define MEMORIA_METAL_MS 3000
 
@@ -99,7 +117,8 @@ HX711 balanca;
 #define INTERVALO_LEITURA_PORTA_MS 80
 #define LEITURAS_CONFIRMACAO_MAO 2
 
-// Sensor indutivo de metal (LOW = metal detectado)
+// Sensor indutivo de metal na boca da lixeira (LOW = metal detectado).
+// E o PRIMEIRO sensor do caminho: ver o bloco de ordem fisica acima.
 #define SENSOR_METAL 32
 
 // Servo que desvia o objeto para o lado certo
@@ -205,11 +224,11 @@ void mostrarOled(const char *l1, const char *l2, const char *l3, const char *l4)
 }
 
 // O E18-D80NK sinaliza presenca digitalmente; nao mede distancia.
-bool lerEntradaInfravermelha() {
-  return digitalRead(SENSOR_IR_ENTRADA) == IR_NIVEL_DETECCAO;
+bool lerConfirmacaoInfravermelha() {
+  return digitalRead(SENSOR_IR_CONFIRMACAO) == IR_NIVEL_DETECCAO;
 }
 
-// O indutivo fica ANTES do infravermelho, na entrada da lixeira.
+// O indutivo fica na BOCA, antes do infravermelho.
 // Registra uma passagem de metal apenas na transicao LIVRE -> METAL.
 // So o IR inicia um ciclo; sem registro recente do indutivo, e NAO PILHA.
 void registrarPassagemIndutivo(unsigned long agora) {
@@ -217,7 +236,7 @@ void registrarPassagemIndutivo(unsigned long agora) {
   if (ativo && !indutivoAnteriorAtivo) {
     ultimoMetalMs = agora;
     metalVisto = true;
-    Serial.println("[INDUTIVO] Metal detectado na entrada. Aguardando passagem no IR.");
+    Serial.println("[INDUTIVO] Metal passou na boca. Aguardando confirmacao do IR.");
   }
   indutivoAnteriorAtivo = ativo;
 
@@ -519,22 +538,28 @@ String jsonRede() {
 String jsonSensor() {
   String j = "{";
 
-  // Mantido por compatibilidade: -1 porque IR nao mede distancia.
+  // Mantido por compatibilidade: -1 porque nenhum sensor da entrada mede
+  // distancia desde que o HC-SR04 saiu dali.
   j += "\"distancia_cm\":";
   j += String(distanciaCm, 1);
 
-  j += ",\"sensor_entrada_tipo\":\"infravermelho\"";
+  // Os dois sensores do caminho, na ordem em que o objeto passa por eles.
+  j += ",\"sensor_entrada_tipo\":\"indutivo\"";
   j += ",\"sensor_entrada_gpio\":";
-  j += SENSOR_IR_ENTRADA;
+  j += SENSOR_METAL;
+
+  j += ",\"sensor_confirmacao_tipo\":\"infravermelho\"";
+  j += ",\"sensor_confirmacao_gpio\":";
+  j += SENSOR_IR_CONFIRMACAO;
 
   j += ",\"objeto_presente\":";
   j += objetoPresente ? "true" : "false";
 
-  // Diagnostico da entrada. Sem estes dois campos, uma classificacao errada
+  // Diagnostico do caminho. Sem estes dois campos, uma classificacao errada
   // so da para investigar com a placa na mao: pela rota agora da para ver se
-  // o IR estava rearmado quando o objeto passou e se o indutivo tinha
+  // o IR estava rearmado quando o objeto chegou e se o indutivo tinha
   // registrado metal dentro da janela.
-  j += ",\"entrada_armada\":";
+  j += ",\"confirmacao_armada\":";
   j += irArmado ? "true" : "false";
 
   j += ",\"metal_recente\":";
@@ -780,16 +805,16 @@ void setup() {
     registrar(LOG_ERRO, "HX711", "Nao respondeu - seguindo sem balanca.");
   }
 
-  // ---------- Infravermelho E18-D80NK (entrada) ----------
+  // ---------- Infravermelho E18-D80NK (confirmacao, sobre a bandeja) ----------
   // A saida do modulo e NPN coletor aberto: ela so sabe puxar para o terra.
   // Sem nada puxando para cima, o pino fica flutuando e le lixo - o sistema
   // dispararia ciclos sozinho. O resistor externo de 10k entre GPIO19 e 3V3
   // resolve; o pull-up interno (~45k) fica ligado junto, de proposito, para
   // que a placa continue se comportando se alguem montar sem o resistor.
   // Os dois em paralelo nao atrapalham: a saida do sensor afunda os dois.
-  pinMode(SENSOR_IR_ENTRADA, INPUT_PULLUP);
-  registrar(LOG_INFO, "IR", "Sensor de entrada configurado no GPIO %d (%s = objeto).",
-            SENSOR_IR_ENTRADA, IR_NIVEL_DETECCAO == LOW ? "LOW" : "HIGH");
+  pinMode(SENSOR_IR_CONFIRMACAO, INPUT_PULLUP);
+  registrar(LOG_INFO, "IR", "Confirmacao de chegada no GPIO %d (%s = objeto).",
+            SENSOR_IR_CONFIRMACAO, IR_NIVEL_DETECCAO == LOW ? "LOW" : "HIGH");
 
   // ---------- Ultrassonico 2 ----------
   pinMode(TRIG_PIN_2, OUTPUT);
@@ -799,6 +824,7 @@ void setup() {
   // ---------- Sensor indutivo ----------
   pinMode(SENSOR_METAL, INPUT_PULLUP);
   indutivoAnteriorAtivo = (digitalRead(SENSOR_METAL) == LOW);
+  registrar(LOG_INFO, "INDUTIVO", "Sensor da boca no GPIO %d (LOW = metal).", SENSOR_METAL);
 
   // ---------- Servos ----------
   servoSeparacao.attach(SERVO_SEPARACAO_PIN);
@@ -866,7 +892,7 @@ void loop() {
   // a passagem mais abaixo. O HX711 so le se uma amostra estiver pronta.
   unsigned long agora = millis();
   registrarPassagemIndutivo(agora);
-  objetoPresente = lerEntradaInfravermelha();
+  objetoPresente = lerConfirmacaoInfravermelha();
   distanciaCm = -1;  // Sensor IR nao fornece centimetros.
   ultimaLeituraMs = agora;
   atualizarPeso();  // Mantem peso_g em /sensor atualizado mesmo entre descartes.
@@ -904,8 +930,8 @@ void loop() {
 
     // Avisa o backend do inicio do ciclo. Nao bloqueia: so enfileira para a
     // task do core 0. Sem sessao autorizada, nao faz nada.
-    registrar(LOG_INFO, "SENSOR", "Objeto detectado pelo IR (GPIO %d); classificacao %s.",
-              SENSOR_IR_ENTRADA, metalDetectado ? "metal" : "nao-metal");
+    registrar(LOG_INFO, "SENSOR", "Chegada confirmada pelo IR (GPIO %d); classificacao %s.",
+              SENSOR_IR_CONFIRMACAO, metalDetectado ? "metal" : "nao-metal");
     nuvemAvisarEtapa("objeto_detectado", distanciaCm, metalDetectado, pesoGramas);
 
     if (metalDetectado) {

@@ -40,9 +40,9 @@ devolvidos ao usuário por uma portinha.
 |           Leitura           |              |      Acionamento        |
 |              v              |              v                          |
 |  +------------------------+ |   +-------------------------------+     |
-|  | IR E18-D80NK (entrada) | |   | Servo separacao  (GPIO 25)    |     |
+|  | Indutivo (boca)        | |   | Servo separacao  (GPIO 25)    |     |
 |  | HC-SR04 (portinha)     | |   | Servo porta      (GPIO 26)    |     |
-|  | Sensor indutivo (metal)| |   | Display OLED SSD1306 (I2C)    |     |
+|  | IR E18-D80NK (bandeja) | |   | Display OLED SSD1306 (I2C)    |     |
 |  | HX711 + celula (peso)  | |   +-------------------------------+     |
 |  +------------------------+ |                                         |
 +-----------------------------------------------------------------------+
@@ -76,9 +76,9 @@ Placa: **ESP32 DevKit v1 (ESP32-WROOM-32)** — ambiente `esp32doit-devkit-v1`.
 
 | Componente | Função | Pinos no ESP32 |
 |---|---|---|
-| E18-D80NK (infravermelho) | Confirma que um objeto entrou; saída digital, sem distância | GPIO 19 (`LOW` = objeto) |
+| Sensor indutivo de metal | **1º do caminho**, na boca: registra que passou metal | GPIO 32 (`LOW` = metal) |
+| E18-D80NK (infravermelho) | **2º do caminho**, sobre a bandeja: confirma a chegada e inicia o ciclo | GPIO 19 (`LOW` = objeto) |
 | HC-SR04 (ultrassônico) | Detecta a mão na abertura da portinha, a até 14 cm | TRIG = 27, ECHO = 33 |
-| Sensor indutivo de metal | Distingue pilha de não-pilha | GPIO 32 (`LOW` = metal) |
 | HX711 + célula de carga | Pesa o objeto | DT = 16, SCK = 4 |
 | Servo de separação | Desvia o objeto para o lado correto | GPIO 25 |
 | Servo da portinha | Devolve o objeto não-metálico | GPIO 26 |
@@ -193,10 +193,12 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 ```json
 {
   "distancia_cm": -1.0,
-  "sensor_entrada_tipo": "infravermelho",
-  "sensor_entrada_gpio": 19,
+  "sensor_entrada_tipo": "indutivo",
+  "sensor_entrada_gpio": 32,
+  "sensor_confirmacao_tipo": "infravermelho",
+  "sensor_confirmacao_gpio": 19,
   "objeto_presente": false,
-  "entrada_armada": true,
+  "confirmacao_armada": true,
   "metal_recente": false,
   "distancia_nao_metal_cm": 9.8,
   "objeto_nao_metal_presente": false,
@@ -208,19 +210,30 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 }
 ```
 
-A entrada é um **infravermelho E18-D80NK** (GPIO 19), que responde presente ou
-ausente e não mede distância. `distancia_cm` vale sempre `-1.0`: o campo
-continua na resposta só para não quebrar quem já lia a rota.
+São **dois sensores em sequência**, e é a ordem entre eles que classifica o
+objeto:
 
-`objeto_presente` é a leitura do infravermelho agora. `entrada_armada` diz se
-ele está pronto para iniciar outro ciclo: depois que um objeto passa, o
-sensor só rearma quando o feixe fica livre por 100 ms seguidos. Sem esse
-campo, um objeto que pareceu ignorado só se explica com a placa na mão.
+1. o **indutivo** (GPIO 32) na boca da lixeira registra que passou metal, mas
+   não inicia nada sozinho;
+2. o **infravermelho E18-D80NK** (GPIO 19), logo abaixo, confirma que o objeto
+   chegou e dispara o ciclo.
 
-`metal_recente` é a memória do sensor indutivo, que fica **antes** do
-infravermelho no caminho de queda. A classificação sai da ordem: se o indutivo
-acusou metal nos 3 s anteriores à passagem pelo infravermelho, é pilha; se
-não, é não-pilha. Os dois campos juntos explicam qualquer classificação.
+Se o indutivo acusou metal nos 3 s anteriores à chegada ao infravermelho, é
+pilha. Se o infravermelho disparou sem esse registro, é não-pilha. Daí a
+ordem física importar: com os dois trocados de lugar, o infravermelho dispara
+primeiro, o indutivo ainda não viu nada, e **toda pilha é classificada como
+não-pilha**.
+
+Nenhum dos dois mede distância, então `distancia_cm` vale sempre `-1.0`: o
+campo continua na resposta só para não quebrar quem já lia a rota.
+
+`objeto_presente` é a leitura do infravermelho agora. `confirmacao_armada` diz
+se ele está pronto para iniciar outro ciclo: depois de um objeto, só rearma
+quando o feixe fica livre por 100 ms seguidos. Sem esse campo, um objeto que
+pareceu ignorado só se explica com a placa na mão.
+
+`metal_recente` é a memória do indutivo dentro da janela de 3 s. Os dois
+campos juntos explicam qualquer classificação.
 
 `distancia_nao_metal_cm` e `objeto_nao_metal_presente` vêm do **ultrassônico**
 (TRIG 27 / ECHO 33), apontado para a abertura da portinha: ele detecta a mão a
@@ -342,9 +355,11 @@ então dois sockets simultâneos só criariam disputa. Cada resposta tem ~300 by
   a uma rede sem saída para a internet, a biblioteca não baixa e o 3D não
   carrega — a página mostra um aviso. A página principal (`/`) não depende de
   CDN e continua funcionando normalmente.
-- O corpo do **Sensor 1**, na entrada, ainda é desenhado como o HC-SR04 que
-  ficava ali antes do infravermelho. A ficha ao lado descreve o E18-D80NK
-  corretamente, mas o modelo 3D não foi refeito.
+- **Os corpos dos dois sensores do caminho estão trocados no 3D.** O Sensor 1
+  ainda é desenhado como o HC-SR04 que ficava na entrada, e o Sensor 2 como o
+  cilindro do indutivo. As fichas ao lado descrevem o que está lá de verdade
+  — indutivo na boca, infravermelho sobre a bandeja —, mas o modelo não foi
+  refeito.
 - O valor da pesagem **não fica retido**: `atualizarPeso()` sobrescreve
   `peso_g` com a leitura instantânea a cada volta do loop, então o peso medido
   no estado `Pesando` só sobrevive alguns segundos.

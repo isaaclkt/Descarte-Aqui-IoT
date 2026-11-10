@@ -63,7 +63,8 @@ FIRMWARE = "0.2.0-sim"
 
 # Espelham os #define de src/main.cpp. Se mudarem la, mudam aqui: o simulador
 # so serve enquanto responder o mesmo que a placa responderia.
-GPIO_SENSOR_IR = 19                # E18-D80NK na entrada
+GPIO_SENSOR_IR = 19                # E18-D80NK, confirma a chegada na bandeja
+GPIO_SENSOR_METAL = 32             # indutivo, primeiro do caminho (na boca)
 PORTA_FECHADA = 170
 PORTA_ABERTA = 10
 
@@ -103,11 +104,12 @@ class Dispositivo:
         self.peso_padrao = peso_padrao
 
         self.estado = "Iniciando"
-        # A entrada e um E18-D80NK: digital, sem distancia. O firmware mantem
-        # distancia_cm em -1 por compatibilidade e o simulador faz igual.
+        # Nenhum sensor do caminho mede distancia desde que o HC-SR04 saiu
+        # da entrada. O firmware mantem distancia_cm em -1 por
+        # compatibilidade e o simulador faz igual.
         self.distancia_cm = -1.0
         self.objeto_presente = False
-        self.entrada_armada = True
+        self.confirmacao_armada = True
         self.metal_recente = False
         self.metal_detectado = False
         self.peso_g = 0.0
@@ -181,10 +183,12 @@ class Dispositivo:
         with self.trava:
             return {
                 "distancia_cm": round(self.distancia_cm, 1),
-                "sensor_entrada_tipo": "infravermelho",
-                "sensor_entrada_gpio": GPIO_SENSOR_IR,
+                "sensor_entrada_tipo": "indutivo",
+                "sensor_entrada_gpio": GPIO_SENSOR_METAL,
+                "sensor_confirmacao_tipo": "infravermelho",
+                "sensor_confirmacao_gpio": GPIO_SENSOR_IR,
                 "objeto_presente": self.objeto_presente,
-                "entrada_armada": self.entrada_armada,
+                "confirmacao_armada": self.confirmacao_armada,
                 "metal_recente": self.metal_recente,
                 "distancia_nao_metal_cm": round(self.distancia_nao_metal_cm, 1),
                 "objeto_nao_metal_presente": self.objeto_nao_metal_presente,
@@ -381,19 +385,19 @@ def ciclo(disp: Dispositivo, metal: bool, atraso: float = 2.0) -> None:
     try:
         time.sleep(atraso)
 
-        # Mesma ordem do firmware: o indutivo fica ANTES do infravermelho.
-        # Quem classifica e a memoria do indutivo; o IR so confirma que algo
-        # passou. Sem registro recente de metal, o objeto e NAO PILHA.
+        # Mesma ordem do firmware: o indutivo fica na boca, ANTES do
+        # infravermelho. Quem classifica e a memoria do indutivo; o IR so
+        # confirma a chegada. Sem registro recente de metal, e NAO PILHA.
         if metal:
             with disp.trava:
                 disp.metal_recente = True
             disp.registrar("INFO", "INDUTIVO",
-                           "Metal detectado na entrada. Aguardando passagem no IR.")
+                           "Metal passou na boca. Aguardando confirmacao do IR.")
             time.sleep(0.3)
 
         with disp.trava:
             disp.objeto_presente = True
-            disp.entrada_armada = False
+            disp.confirmacao_armada = False
             disp.metal_detectado = disp.metal_recente
             disp.metal_recente = False
 
@@ -401,7 +405,7 @@ def ciclo(disp: Dispositivo, metal: bool, atraso: float = 2.0) -> None:
                        f"IR confirmou objeto. Indutivo antes do IR: "
                        f"{'SIM (PILHA)' if metal else 'NAO (NAO PILHA)'}.")
         disp.registrar("INFO", "SENSOR",
-                       f"Objeto detectado pelo IR (GPIO {GPIO_SENSOR_IR}); "
+                       f"Chegada confirmada pelo IR (GPIO {GPIO_SENSOR_IR}); "
                        f"classificacao {'metal' if metal else 'nao-metal'}.")
         avisar_etapa(disp, "objeto_detectado")
 
@@ -413,7 +417,7 @@ def ciclo(disp: Dispositivo, metal: bool, atraso: float = 2.0) -> None:
         with disp.trava:
             disp.estado = "Aguardando objeto"
             disp.objeto_presente = False
-            disp.entrada_armada = True
+            disp.confirmacao_armada = True
             disp.metal_detectado = False
             disp.servo_separacao = 90
     finally:
