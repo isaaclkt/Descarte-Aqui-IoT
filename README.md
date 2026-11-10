@@ -40,8 +40,8 @@ devolvidos ao usuário por uma portinha.
 |           Leitura           |              |      Acionamento        |
 |              v              |              v                          |
 |  +------------------------+ |   +-------------------------------+     |
-|  | HC-SR04 1 (entrada)    | |   | Servo separacao  (GPIO 25)    |     |
-|  | HC-SR04 2 (nao-metal)  | |   | Servo porta      (GPIO 26)    |     |
+|  | IR E18-D80NK (entrada) | |   | Servo separacao  (GPIO 25)    |     |
+|  | HC-SR04 (portinha)     | |   | Servo porta      (GPIO 26)    |     |
 |  | Sensor indutivo (metal)| |   | Display OLED SSD1306 (I2C)    |     |
 |  | HX711 + celula (peso)  | |   +-------------------------------+     |
 |  +------------------------+ |                                         |
@@ -76,8 +76,8 @@ Placa: **ESP32 DevKit v1 (ESP32-WROOM-32)** — ambiente `esp32doit-devkit-v1`.
 
 | Componente | Função | Pinos no ESP32 |
 |---|---|---|
-| HC-SR04 (ultrassônico 1) | Detecta objeto na entrada, a até 5 cm | TRIG = 19, ECHO = 18 |
-| HC-SR04 (ultrassônico 2) | Detecta o objeto no compartimento do não-metal | TRIG = 27, ECHO = 33 |
+| E18-D80NK (infravermelho) | Confirma que um objeto entrou; saída digital, sem distância | GPIO 19 (`LOW` = objeto) |
+| HC-SR04 (ultrassônico) | Detecta a mão na abertura da portinha, a até 14 cm | TRIG = 27, ECHO = 33 |
 | Sensor indutivo de metal | Distingue pilha de não-pilha | GPIO 32 (`LOW` = metal) |
 | HX711 + célula de carga | Pesa o objeto | DT = 16, SCK = 4 |
 | Servo de separação | Desvia o objeto para o lado correto | GPIO 25 |
@@ -85,7 +85,12 @@ Placa: **ESP32 DevKit v1 (ESP32-WROOM-32)** — ambiente `esp32doit-devkit-v1`.
 | Display OLED SSD1306 128×64 | Mostra o estado localmente | I2C: SDA = 21, SCL = 22, endereço 0x3C |
 
 Posições dos servos (constantes no firmware): separação em 90° (repouso),
-160° (metal) e 20° (não-metal); porta em 0° (fechada) e 90° (aberta).
+160° (metal) e 20° (não-metal); porta em 170° (fechada) e 10° (aberta).
+
+O E18-D80NK tem saída NPN de coletor aberto: ela só puxa para o terra. Por
+isso o GPIO 19 precisa de algo puxando para 3,3 V — há um resistor externo de
+10 k, e o firmware ainda liga o `INPUT_PULLUP` interno por garantia. Sem
+nenhum dos dois o pino flutua e a placa dispara ciclos sozinha.
 
 > O diagrama de ligações e as fotos da montagem devem ser colocados em `docs/`.
 
@@ -187,8 +192,12 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 
 ```json
 {
-  "distancia_cm": 12.4,
+  "distancia_cm": -1.0,
+  "sensor_entrada_tipo": "infravermelho",
+  "sensor_entrada_gpio": 19,
   "objeto_presente": false,
+  "entrada_armada": true,
+  "metal_recente": false,
   "distancia_nao_metal_cm": 9.8,
   "objeto_nao_metal_presente": false,
   "metal_detectado": false,
@@ -199,22 +208,30 @@ O campo `estado` assume os valores `Aguardando objeto`, `Separando metal`,
 }
 ```
 
-`distancia_cm` vale `-1.0` quando o HC-SR04 não recebe eco dentro de 30 ms — o
-mesmo vale para `distancia_nao_metal_cm`.
+A entrada é um **infravermelho E18-D80NK** (GPIO 19), que responde presente ou
+ausente e não mede distância. `distancia_cm` vale sempre `-1.0`: o campo
+continua na resposta só para não quebrar quem já lia a rota.
 
-`distancia_nao_metal_cm` e `objeto_nao_metal_presente` vêm do **segundo
-ultrassônico** (TRIG 27 / ECHO 33), que fica no compartimento do não-metal: é
-ele que manda abrir a portinha quando o objeto chega e fechá-la só depois que a
-retirada é confirmada. Enquanto esse controle automático está ativo,
-`/atuador` responde `409` — a portinha não aceita comando manual no meio da
-retirada.
+`objeto_presente` é a leitura do infravermelho agora. `entrada_armada` diz se
+ele está pronto para iniciar outro ciclo: depois que um objeto passa, o
+sensor só rearma quando o feixe fica livre por 100 ms seguidos. Sem esse
+campo, um objeto que pareceu ignorado só se explica com a placa na mão.
 
-As duas esperas têm prazo (`TIMEOUT_CHEGADA_NAO_METAL_MS`, 30 s, e
-`TIMEOUT_PORTA_ABERTA_MS`, 60 s). Sem eles o ciclo nunca terminaria quando o
-objeto não parasse na frente do sensor 2, ou quando o sensor deixasse de
-devolver eco: a máquina não aceitaria outro objeto e, com o `409` acima, nem
-pela rede daria para fechar a portinha. Ao estourar, o firmware registra `WARN`
-em `/logs`, fecha a portinha e devolve o controle ao ciclo normal.
+`metal_recente` é a memória do sensor indutivo, que fica **antes** do
+infravermelho no caminho de queda. A classificação sai da ordem: se o indutivo
+acusou metal nos 3 s anteriores à passagem pelo infravermelho, é pilha; se
+não, é não-pilha. Os dois campos juntos explicam qualquer classificação.
+
+`distancia_nao_metal_cm` e `objeto_nao_metal_presente` vêm do **ultrassônico**
+(TRIG 27 / ECHO 33), apontado para a abertura da portinha: ele detecta a mão a
+até 14 cm e segura a porta aberta enquanto ela estiver ali. Enquanto esse
+controle automático está ativo, `/atuador` responde `409` — a portinha não
+aceita comando manual no meio da retirada.
+
+A porta **não fecha por prazo**, de propósito: fechar com a mão dentro seria
+pior do que ficar aberta. Ela abre assim que o desvio termina e só fecha
+depois que a região da abertura fica livre por 1,5 s seguidos. Leitura sem eco
+é inconclusiva e nunca fecha a porta sozinha.
 
 `peso_bruto` é a leitura crua do HX711 (usada para calibrar) e `peso_g` é o
 valor convertido em gramas.
@@ -325,9 +342,9 @@ então dois sockets simultâneos só criariam disputa. Cada resposta tem ~300 by
   a uma rede sem saída para a internet, a biblioteca não baixa e o 3D não
   carrega — a página mostra um aviso. A página principal (`/`) não depende de
   CDN e continua funcionando normalmente.
-- O corpo marcado como **"Sensor previsto"**, na parede do compartimento de
-  rejeição, não corresponde a nenhum sensor instalado. O protótipo tem um único
-  HC-SR04 e ele fica na entrada (Sensor 1).
+- O corpo do **Sensor 1**, na entrada, ainda é desenhado como o HC-SR04 que
+  ficava ali antes do infravermelho. A ficha ao lado descreve o E18-D80NK
+  corretamente, mas o modelo 3D não foi refeito.
 - O valor da pesagem **não fica retido**: `atualizarPeso()` sobrescreve
   `peso_g` com a leitura instantânea a cada volta do loop, então o peso medido
   no estado `Pesando` só sobrevive alguns segundos.

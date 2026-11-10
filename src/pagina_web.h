@@ -76,13 +76,13 @@ static const char PAGINA_HTML[] PROGMEM = R"rawliteral(
       <article class="cartao">
         <h3>Objeto presente</h3>
         <p class="valor" id="objeto-presente">--</p>
-        <p class="detalhe">Distância: <span id="distancia">--</span> cm</p>
+        <p class="detalhe">Infravermelho (GPIO <span id="entrada-gpio">--</span>) · <span id="entrada-armada">--</span></p>
       </article>
 
       <article class="cartao">
         <h3>Material</h3>
         <p class="valor" id="metal">--</p>
-        <p class="detalhe">Sensor indutivo (GPIO 32)</p>
+        <p class="detalhe">Indutivo (GPIO 32) · metal recente: <span id="metal-recente">--</span></p>
       </article>
 
       <article class="cartao">
@@ -645,11 +645,16 @@ function aplicarStatus(status) {
 
 function aplicarSensor(sensor) {
   ultimoSensor = sensor;
-  el("distancia").textContent =
-    sensor.distancia_cm < 0 ? "sem eco" : sensor.distancia_cm.toFixed(1);
+  // A entrada e um E18-D80NK: ele diz presente ou ausente, nao distancia.
+  // "armado" conta: enquanto o feixe nao liberar, um objeto novo nao inicia
+  // outro ciclo, e e isso que explica um objeto que parece ter sido ignorado.
+  el("entrada-gpio").textContent = sensor.sensor_entrada_gpio;
+  el("entrada-armada").textContent =
+    sensor.entrada_armada ? "pronto" : "feixe bloqueado";
 
   el("objeto-presente").textContent = sensor.objeto_presente ? "Sim" : "Nao";
   el("metal").textContent = sensor.metal_detectado ? "Metal (pilha)" : "Nao metal";
+  el("metal-recente").textContent = sensor.metal_recente ? "sim" : "nao";
 
   if (sensor.balanca_ok) {
     el("peso").textContent = sensor.peso_g.toFixed(1);
@@ -1370,8 +1375,8 @@ const COMPONENTS = {
   },
   sensor1: {
     label: 'Sensor 1', side: 'right', distance: 0.75, stage: 2,
-    title: 'Sensor 1 · presença (HC-SR04)',
-    text: 'Sensor ultrassônico montado na entrada, ligado aos pinos TRIG 19 e ECHO 18. Mede a distância até o objeto e, abaixo de 5 cm, dispara o ciclo de separação.'
+    title: 'Sensor 1 · presença (E18-D80NK)',
+    text: 'Sensor infravermelho de barreira refletiva no GPIO 19, no lugar do ultrassônico que ficava aqui. Não mede distância: a saída vai a nível baixo enquanto houver objeto na frente, e é essa transição que dispara o ciclo de separação. O corpo desenhado aqui ainda é o do ultrassônico antigo — o modelo 3D não foi refeito.'
   },
   sensor2: {
     label: 'Sensor 2', side: 'right', distance: 0.8, stage: 3,
@@ -1399,9 +1404,9 @@ const COMPONENTS = {
     text: 'Recebe tudo o que não foi identificado como pilha. O piso inclinado leva o objeto até a portinha de devolução, na frente do equipamento.'
   },
   hcsr04: {
-    label: 'Sensor previsto', side: 'right', distance: 0.75,
-    title: 'Posição prevista · ainda não instalada',
-    text: 'O protótipo tem um único HC-SR04, e ele fica na entrada (Sensor 1). Este corpo marca onde entraria um segundo sensor para confirmar a retirada do objeto — ele ainda não existe no firmware.'
+    label: 'Ultrassônico da portinha', short: 'Portinha', side: 'right', distance: 0.75,
+    title: 'HC-SR04 · retirada do objeto',
+    text: 'Ultrassônico em TRIG 27 e ECHO 33, apontado para a abertura da portinha. Enquanto detecta a mão a até 14 cm a porta fica aberta; ela só fecha depois que a região permanece livre por 1,5 s. Leitura sem eco é inconclusiva e nunca fecha a porta sozinha.'
   },
   portinha: {
     label: 'Portinha + servo', side: 'right', outside: true, distance: 0.8,
@@ -2269,7 +2274,7 @@ function buildSensors(mat) {
     addBox(sensor1, [0.024, 0.032, 0.032], mat.blackPlastic, [sx * 0.077, SENSOR1_Y, FLOW_Z]);
     addMesh(sensor1, new THREE.SphereGeometry(0.008, 16, 12), sx < 0 ? emitterLed : standard(0x0e1a24, 0.15, 0.2), [sx * 0.064, SENSOR1_Y, FLOW_Z]);
   }
-  const boardTexture = createSmallBoardTexture('#1d4ea3', 'HC-SR04');
+  const boardTexture = createSmallBoardTexture('#1d4ea3', 'E18-D80NK');
   const board = new THREE.MeshStandardMaterial({ map: boardTexture, roughness: 0.5 });
   addBox(sensor1, [0.085, 0.045, 0.004], [mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, mat.pcbBlue, board, mat.pcbBlue], [0.035, SENSOR1_Y, -0.032]);
   const beamMaterial = new THREE.MeshBasicMaterial({ color: 0xff4a4a, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -3395,9 +3400,9 @@ function detalheAoVivo(key) {
   const s = esp32.status;
   const n = esp32.sensor;
   if (key === 'sensor1') {
-    return n.distancia_cm < 0
-      ? 'Agora: sem eco de retorno.'
-      : `Agora: ${n.distancia_cm.toFixed(1)} cm · objeto ${n.objeto_presente ? 'presente' : 'ausente'}.`;
+    const estado = n.objeto_presente ? 'objeto presente' : 'via livre';
+    const armado = n.entrada_armada ? 'pronto para o próximo' : 'feixe ainda bloqueado';
+    return `Agora: ${estado} · ${armado}.`;
   }
   if (key === 'sensor2') {
     if (!n.objeto_presente) return 'Agora: sem objeto sobre a bandeja.';

@@ -102,11 +102,16 @@ function aplicarStatus(status) {
 
 function aplicarSensor(sensor) {
   ultimoSensor = sensor;
-  el("distancia").textContent =
-    sensor.distancia_cm < 0 ? "sem eco" : sensor.distancia_cm.toFixed(1);
+  // A entrada e um E18-D80NK: ele diz presente ou ausente, nao distancia.
+  // "armado" conta: enquanto o feixe nao liberar, um objeto novo nao inicia
+  // outro ciclo, e e isso que explica um objeto que parece ter sido ignorado.
+  el("entrada-gpio").textContent = sensor.sensor_entrada_gpio;
+  el("entrada-armada").textContent =
+    sensor.entrada_armada ? "pronto" : "feixe bloqueado";
 
   el("objeto-presente").textContent = sensor.objeto_presente ? "Sim" : "Nao";
   el("metal").textContent = sensor.metal_detectado ? "Metal (pilha)" : "Nao metal";
+  el("metal-recente").textContent = sensor.metal_recente ? "sim" : "nao";
 
   if (sensor.balanca_ok) {
     el("peso").textContent = sensor.peso_g.toFixed(1);

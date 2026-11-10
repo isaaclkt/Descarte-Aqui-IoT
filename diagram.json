@@ -18,11 +18,11 @@
       "attrs": { "i2cAddress": "0x3c" }
     },
     {
-      "type": "wokwi-hc-sr04",
-      "id": "ultra",
+      "type": "wokwi-slide-switch",
+      "id": "ir",
       "top": 10,
       "left": -250,
-      "attrs": { "distance": "30" }
+      "attrs": {}
     },
     {
       "type": "wokwi-slide-switch",
@@ -62,10 +62,8 @@
     [ "oled:SDA", "esp:D21", "green", [] ],
     [ "oled:SCL", "esp:D22", "green", [] ],
 
-    [ "ultra:VCC", "esp:VIN", "red", [] ],
-    [ "ultra:GND", "esp:GND.2", "black", [] ],
-    [ "ultra:TRIG", "esp:D19", "blue", [] ],
-    [ "ultra:ECHO", "esp:D18", "blue", [] ],
+    [ "ir:2", "esp:D19", "blue", [] ],
+    [ "ir:1", "esp:GND.2", "black", [] ],
 
     [ "metal:2", "esp:D32", "purple", [] ],
     [ "metal:1", "esp:GND.2", "black", [] ],

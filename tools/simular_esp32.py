@@ -61,6 +61,12 @@ TEMPO_ATE_RETIRADA = 4.0           # quanto o "usuario" demora a retirar
 MAC_SIMULADO = "A0:B7:65:00:00:01"
 FIRMWARE = "0.2.0-sim"
 
+# Espelham os #define de src/main.cpp. Se mudarem la, mudam aqui: o simulador
+# so serve enquanto responder o mesmo que a placa responderia.
+GPIO_SENSOR_IR = 19                # E18-D80NK na entrada
+PORTA_FECHADA = 170
+PORTA_ABERTA = 10
+
 
 # -----------------------------------------------------------------------------
 # Configuracao do backend, lida do mesmo arquivo que o firmware usa
@@ -97,8 +103,12 @@ class Dispositivo:
         self.peso_padrao = peso_padrao
 
         self.estado = "Iniciando"
-        self.distancia_cm = 18.0
+        # A entrada e um E18-D80NK: digital, sem distancia. O firmware mantem
+        # distancia_cm em -1 por compatibilidade e o simulador faz igual.
+        self.distancia_cm = -1.0
         self.objeto_presente = False
+        self.entrada_armada = True
+        self.metal_recente = False
         self.metal_detectado = False
         self.peso_g = 0.0
         self.distancia_nao_metal_cm = 20.0
@@ -171,7 +181,11 @@ class Dispositivo:
         with self.trava:
             return {
                 "distancia_cm": round(self.distancia_cm, 1),
+                "sensor_entrada_tipo": "infravermelho",
+                "sensor_entrada_gpio": GPIO_SENSOR_IR,
                 "objeto_presente": self.objeto_presente,
+                "entrada_armada": self.entrada_armada,
+                "metal_recente": self.metal_recente,
                 "distancia_nao_metal_cm": round(self.distancia_nao_metal_cm, 1),
                 "objeto_nao_metal_presente": self.objeto_nao_metal_presente,
                 "metal_detectado": self.metal_detectado,
@@ -184,10 +198,12 @@ class Dispositivo:
     def json_servo(self) -> dict:
         with self.trava:
             return {"servos": [
+                # Angulos iguais aos do firmware: a porta fecha em 170 e
+                # abre em 10, entao minimo > maximo aqui tambem.
                 {"nome": "porta", "pino": 26,
-                 "posicao": 90 if self.porta_aberta else 0,
+                 "posicao": PORTA_ABERTA if self.porta_aberta else PORTA_FECHADA,
                  "estado": "aberta" if self.porta_aberta else "fechada",
-                 "minimo": 0, "maximo": 90},
+                 "minimo": PORTA_FECHADA, "maximo": PORTA_ABERTA},
                 {"nome": "separacao", "pino": 25, "posicao": self.servo_separacao,
                  "estado": ("metal" if self.servo_separacao == 160
                             else "nao_metal" if self.servo_separacao == 20 else "centro"),
@@ -361,13 +377,28 @@ def ciclo(disp: Dispositivo, metal: bool, atraso: float = 2.0) -> None:
     try:
         time.sleep(atraso)
 
-        with disp.trava:
-            disp.distancia_cm = 3.2
-            disp.objeto_presente = True
-            disp.metal_detectado = metal
+        # Mesma ordem do firmware: o indutivo fica ANTES do infravermelho.
+        # Quem classifica e a memoria do indutivo; o IR so confirma que algo
+        # passou. Sem registro recente de metal, o objeto e NAO PILHA.
+        if metal:
+            with disp.trava:
+                disp.metal_recente = True
+            disp.registrar("INFO", "INDUTIVO",
+                           "Metal detectado na entrada. Aguardando passagem no IR.")
+            time.sleep(0.3)
 
+        with disp.trava:
+            disp.objeto_presente = True
+            disp.entrada_armada = False
+            disp.metal_detectado = disp.metal_recente
+            disp.metal_recente = False
+
+        disp.registrar("INFO", "CLASSIFICACAO",
+                       f"IR confirmou objeto. Indutivo antes do IR: "
+                       f"{'SIM (PILHA)' if metal else 'NAO (NAO PILHA)'}.")
         disp.registrar("INFO", "SENSOR",
-                       f"Objeto detectado a 3.2 cm ({'metal' if metal else 'nao-metal'}).")
+                       f"Objeto detectado pelo IR (GPIO {GPIO_SENSOR_IR}); "
+                       f"classificacao {'metal' if metal else 'nao-metal'}.")
         avisar_etapa(disp, "objeto_detectado")
 
         if metal:
@@ -378,7 +409,7 @@ def ciclo(disp: Dispositivo, metal: bool, atraso: float = 2.0) -> None:
         with disp.trava:
             disp.estado = "Aguardando objeto"
             disp.objeto_presente = False
-            disp.distancia_cm = 18.0
+            disp.entrada_armada = True
             disp.metal_detectado = False
             disp.servo_separacao = 90
     finally:

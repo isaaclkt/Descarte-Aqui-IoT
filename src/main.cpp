@@ -523,6 +523,16 @@ String jsonSensor() {
   j += ",\"objeto_presente\":";
   j += objetoPresente ? "true" : "false";
 
+  // Diagnostico da entrada. Sem estes dois campos, uma classificacao errada
+  // so da para investigar com a placa na mao: pela rota agora da para ver se
+  // o IR estava rearmado quando o objeto passou e se o indutivo tinha
+  // registrado metal dentro da janela.
+  j += ",\"entrada_armada\":";
+  j += irArmado ? "true" : "false";
+
+  j += ",\"metal_recente\":";
+  j += (metalVisto && millis() - ultimoMetalMs <= MEMORIA_METAL_MS) ? "true" : "false";
+
   j += ",\"distancia_nao_metal_cm\":";
   j += String(distanciaNaoMetalCm, 1);
 
@@ -738,9 +748,15 @@ void setup() {
   }
 
   // ---------- Infravermelho E18-D80NK (entrada) ----------
-  // Necessario resistor de 10k entre GPIO19 e 3V3 para saida NPN aberta.
-  pinMode(SENSOR_IR_ENTRADA, INPUT);
-  registrar(LOG_INFO, "IR", "Sensor de entrada configurado no GPIO %d.", SENSOR_IR_ENTRADA);
+  // A saida do modulo e NPN coletor aberto: ela so sabe puxar para o terra.
+  // Sem nada puxando para cima, o pino fica flutuando e le lixo - o sistema
+  // dispararia ciclos sozinho. O resistor externo de 10k entre GPIO19 e 3V3
+  // resolve; o pull-up interno (~45k) fica ligado junto, de proposito, para
+  // que a placa continue se comportando se alguem montar sem o resistor.
+  // Os dois em paralelo nao atrapalham: a saida do sensor afunda os dois.
+  pinMode(SENSOR_IR_ENTRADA, INPUT_PULLUP);
+  registrar(LOG_INFO, "IR", "Sensor de entrada configurado no GPIO %d (%s = objeto).",
+            SENSOR_IR_ENTRADA, IR_NIVEL_DETECCAO == LOW ? "LOW" : "HIGH");
 
   // ---------- Ultrassonico 2 ----------
   pinMode(TRIG_PIN_2, OUTPUT);
