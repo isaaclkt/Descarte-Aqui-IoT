@@ -8,15 +8,15 @@ consulta os sensores e envia comandos para o atuador.
 TDE da disciplina **Conectividade em Sistemas Ciberfísicos** — Engenharia de
 Software, PUCPR.
 
-**Integrantes da equipe — Grupo 4**
+**Integrantes da equipe — Grupo 6**
 
 | Nome completo | RA | Usuário GitHub |
 |---|---|---|
-| André Fochesatto | 40130997 | — |
+| André Fochesatto | 40130997 | `andrefochesatto0` |
 | Arthur Medeiros Diniz Azevedo | 40126823 | `arthurmedeiros0` |
 | Isaac de Lima Klimiont | 40132716 | `isaaclkt` |
 | Lucas Buzzi Lima | 40126429 | `Llucas-buzzi-lima` |
-| Luiz Felipe Rodrigues da Silva Souza | 40141767 | — |
+| Luiz Felipe Rodrigues da Silva Souza | 40141767 | `nunu-bol` |
 
 A coluna do usuário GitHub liga cada integrante ao histórico de commits deste
 repositório, que o regulamento do TDE avalia junto com a defesa individual.
