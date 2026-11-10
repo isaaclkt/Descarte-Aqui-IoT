@@ -279,7 +279,11 @@ def tarefa_nuvem(disp: Dispositivo) -> None:
 
     while True:
         codigo, corpo = chamar_backend(
-            f"/dispositivo/autorizacao.php?mac={MAC_SIMULADO}&firmware={FIRMWARE}")
+            f"/dispositivo/autorizacao.php?mac={MAC_SIMULADO}&firmware={FIRMWARE}"
+            # A placa serve na 80; aqui nao da, porque nesta maquina a 80 e
+            # do Apache. Informar a porta real e o que faz o link do
+            # monitoramento apontar para o simulador em vez do XAMPP.
+            f"&porta={disp.porta_http}")
 
         with disp.trava:
             if codigo == 200:

@@ -46,7 +46,7 @@ try {
         $erro = 'Endereco invalido. Escaneie novamente o QR Code do equipamento.';
     } else {
         $dispositivo = consultar_linha(
-            'SELECT id, codigo, nome, ativo, firmware, mac, ultimo_ip,
+            'SELECT id, codigo, nome, ativo, firmware, mac, ultimo_ip, ultimo_porta,
                     ultimo_contato_em,
                     TIMESTAMPDIFF(SECOND, ultimo_contato_em, NOW()) AS sem_contato_s
                FROM dispositivo WHERE codigo = ? LIMIT 1',
@@ -62,7 +62,10 @@ try {
     }
 
     if ($erro === null && $coletorId !== null) {
-        $monitoramentoUrl = monitoramento_url($dispositivo['ultimo_ip'] ?? null);
+        $monitoramentoUrl = monitoramento_url(
+            $dispositivo['ultimo_ip'] ?? null,
+            isset($dispositivo['ultimo_porta']) ? (int) $dispositivo['ultimo_porta'] : null
+        );
         $monitoramentoMesmaRede = monitoramento_mesma_rede($dispositivo['ultimo_ip'] ?? null);
         $segundosSemContato = $dispositivo['ultimo_contato_em'] === null
             ? null

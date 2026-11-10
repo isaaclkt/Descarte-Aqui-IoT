@@ -109,6 +109,7 @@ $existeColuna = static function (string $tabela, string $coluna) use ($contar, $
 
 const SCRIPT_SITE = 'banco/01_descarteaqui_entrega_final.sql (repositorio Web)';
 const SCRIPT_IOT = 'backend/sql/01_integracao_iot.sql (este repositorio)';
+const SCRIPT_IOT_PORTA = 'backend/sql/02_porta_dispositivo.sql (este repositorio)';
 const CADASTRO_EQUIPAMENTO = 'php ferramentas/gerar-chave.php "PUCPR" esp32-pucpr';
 
 $itens = [];
@@ -137,6 +138,12 @@ $itens[] = [
     'coluna descarte.fk_sessao_descarte_id',
     $existeTabela('descarte') && $existeColuna('descarte', 'fk_sessao_descarte_id'),
     SCRIPT_IOT,
+];
+
+$itens[] = [
+    'coluna dispositivo.ultimo_porta',
+    $existeTabela('dispositivo') && $existeColuna('dispositivo', 'ultimo_porta'),
+    SCRIPT_IOT_PORTA,
 ];
 
 $equipamentos = $existeTabela('dispositivo') ? $contar('SELECT COUNT(*) FROM dispositivo') : 0;
@@ -185,7 +192,8 @@ foreach ($faltando as $origem => $nomes) {
 echo "Como rodar os scripts (pela LINHA DE COMANDO, nao pelo phpMyAdmin:\n";
 echo "ele costuma abortar no bloco DELIMITER e deixar o banco pela metade):\n\n";
 echo "  mysql -u root < \"../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql\"\n";
-echo "  mysql -u root descarteaqui < backend/sql/01_integracao_iot.sql\n\n";
+echo "  mysql -u root descarteaqui < backend/sql/01_integracao_iot.sql\n";
+echo "  mysql -u root descarteaqui < backend/sql/02_porta_dispositivo.sql\n\n";
 echo "O script do site recria os dados de teste, entao rodar de novo devolve\n";
 echo "o banco ao estado inicial. As contas criadas no site se perdem; os\n";
 echo "equipamentos cadastrados com gerar-chave.php tambem.\n\n";

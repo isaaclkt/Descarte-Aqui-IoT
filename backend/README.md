@@ -68,6 +68,12 @@ Depois a migração da integração:
 mysql -u root descarteaqui < sql/01_integracao_iot.sql
 ```
 
+E a migração que acrescenta a porta do equipamento:
+
+```bash
+mysql -u root descarteaqui < sql/02_porta_dispositivo.sql
+```
+
 A migração **só adiciona**: cria `dispositivo`, `sessao_descarte` e
 `evento_iot`, e acrescenta duas colunas a `descarte`. Nada existente é apagado
 ou alterado de forma destrutiva.
@@ -161,6 +167,14 @@ mesma regra que `php/perfil-salvar.php` já adota.
 | `dispositivo/evento.php` | POST | telemetria do ciclo (não pontua) |
 | `dispositivo/concluir.php` | POST | conclusão: registra o descarte e credita |
 
+O `autorizacao.php` aceita, opcionalmente, `?mac=…&firmware=…&porta=…`. São
+telemetria de presença, gravadas em `dispositivo`. A **porta** é a única que o
+site não teria como descobrir: o IP ele aprende da origem da própria consulta,
+mas a porta de origem de uma requisição de saída é efêmera e não diz nada
+sobre onde o equipamento escuta. É com ela que a página do coletor monta o
+link do monitoramento. O firmware informa 80; o simulador informa a porta em
+que subiu, porque a 80 é do Apache na máquina de desenvolvimento.
+
 Códigos: 200, 400 (entrada inválida), 401 (dispositivo não autenticado), 403
 (chave ou dono errado), 404 (sessão inexistente), 405 (método), 409 (sessão
 encerrada ou expirada), 422 (peso fora da faixa), 503 (banco indisponível).
@@ -207,7 +221,7 @@ O teste cria descartes e credita pontos, então use uma base **descartável**.
 Para voltar ao estado inicial, apague o banco e refaça os dois passos:
 
 ```bash
-mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui;" && mysql -u root < "../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql" && mysql -u root descarteaqui < sql/01_integracao_iot.sql
+mysql -u root -e "DROP DATABASE IF EXISTS descarteaqui;" && mysql -u root < "../../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql" && mysql -u root descarteaqui < sql/01_integracao_iot.sql && mysql -u root descarteaqui < sql/02_porta_dispositivo.sql
 ```
 
 > **Não basta rodar o script do PjBL 3 de novo.** Ele é reexecutável, mas faz

@@ -9,7 +9,9 @@
  * de tempos em tempos. Nenhuma porta precisa ser aberta no roteador.
  *
  * Autenticacao: headers X-Dispositivo e X-Chave.
- * Opcional, por querystring: ?mac=...&firmware=...  (telemetria de presenca)
+ * Opcional, por querystring: ?mac=...&firmware=...&porta=...
+ * (telemetria de presenca; a porta e onde o equipamento serve a pagina de
+ * monitoramento, que o site nao tem como deduzir sozinho)
  *
  * Respostas
  *   200 {"ok":true,"autorizacao":null}                  nada pendente
@@ -39,7 +41,14 @@ try {
     $firmware = $_GET['firmware'] ?? null;
     $firmware = is_string($firmware) && $firmware !== '' ? mb_substr($firmware, 0, 20) : null;
 
-    marcar_contato_dispositivo($dispositivoId, $mac, $firmware);
+    // Porta em que o equipamento serve a pagina de monitoramento. Nao vale
+    // para nada alem de montar um link: nao abre acesso nenhum, e a propria
+    // placa que informa. Fora da faixa valida, ignora e mantem o que havia.
+    $porta = $_GET['porta'] ?? null;
+    $porta = is_string($porta) && preg_match('/^\d{1,5}$/', $porta) ? (int) $porta : null;
+    $porta = ($porta !== null && $porta >= 1 && $porta <= 65535) ? $porta : null;
+
+    marcar_contato_dispositivo($dispositivoId, $mac, $firmware, $porta);
 
     // Sessao viva deste dispositivo. O UNIQUE em dispositivo_ocupado garante
     // que existe no maximo uma, entao nao ha ambiguidade de qual entregar.

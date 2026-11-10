@@ -277,18 +277,23 @@ function autenticar_dispositivo(): array
 /**
  * Atualiza a telemetria de presenca do dispositivo.
  */
-function marcar_contato_dispositivo(int $dispositivoId, ?string $mac = null, ?string $firmware = null): void
-{
+function marcar_contato_dispositivo(
+    int $dispositivoId,
+    ?string $mac = null,
+    ?string $firmware = null,
+    ?int $porta = null
+): void {
     try {
         consultar(
             'UPDATE dispositivo
                 SET ultimo_contato_em = NOW(),
                     ultimo_ip = ?,
                     mac = COALESCE(?, mac),
-                    firmware = COALESCE(?, firmware)
+                    firmware = COALESCE(?, firmware),
+                    ultimo_porta = COALESCE(?, ultimo_porta)
               WHERE id = ?',
-            'sssi',
-            [ip_cliente(), $mac, $firmware, $dispositivoId]
+            'sssii',
+            [ip_cliente(), $mac, $firmware, $porta, $dispositivoId]
         );
     } catch (Throwable $erro) {
         error_log('[IOT][WARN] Falha ao marcar contato do dispositivo: ' . $erro->getMessage());
@@ -342,11 +347,17 @@ function coletor_logado(): ?int
  * ultimo_ip o IP de origem dessas consultas (marcar_contato_dispositivo()).
  * E o IP que ele tem AGORA, na rede em que esta.
  *
+ * A porta vem junto, em dispositivo.ultimo_porta, informada pelo proprio
+ * equipamento. Porta nao da para deduzir do lado do site: a porta de ORIGEM
+ * das consultas que a placa faz e efemera. O firmware serve na 80; o
+ * simulador nao pode, porque nesta maquina a 80 e do Apache - sem este campo
+ * o link do simulador caia no painel do XAMPP.
+ *
  * Devolve null quando o valor gravado nao serve como endereco de navegacao:
  * IP vazio, invalido ou nao-IPv4. Quem decide se da para alcancar dali e
  * quem chama, com monitoramento_mesma_rede().
  */
-function monitoramento_url(?string $ultimoIp): ?string
+function monitoramento_url(?string $ultimoIp, ?int $porta = null): ?string
 {
     $ip = trim((string) $ultimoIp);
 
@@ -354,9 +365,11 @@ function monitoramento_url(?string $ultimoIp): ?string
         return null;
     }
 
-    // O firmware sobe o servidor na porta 80, sem TLS: o ESP32 nao tem
-    // certificado e nem teria como ter um valido para um IP de rede local.
-    return 'http://' . $ip . '/';
+    // Sem TLS: o ESP32 nao tem certificado e nem teria como ter um valido
+    // para um IP de rede local.
+    $porta = ($porta !== null && $porta >= 1 && $porta <= 65535) ? $porta : 80;
+
+    return 'http://' . $ip . ($porta === 80 ? '' : ':' . $porta) . '/';
 }
 
 /**

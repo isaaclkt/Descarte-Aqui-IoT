@@ -27,6 +27,15 @@
 
 #include <Arduino.h>
 
+// Porta do servidor HTTP local, declarada aqui porque dois lugares precisam
+// dela: o main.cpp, que sobe o WebServer nela, e a consulta de autorizacao,
+// que informa ao site onde a pagina de monitoramento atende. O site nao tem
+// como descobrir isso sozinho - a porta de ORIGEM das consultas e efemera.
+#define DISPOSITIVO_PORTA_HTTP 80
+
+// Versao do firmware, informada ao backend junto com o MAC.
+extern const char *FIRMWARE;
+
 // Em que ponto do descarte autorizado estamos.
 enum EstadoSessao {
   SESSAO_OCIOSA,        // nenhuma autorizacao: a maquina funciona, mas nao pontua

@@ -233,7 +233,13 @@ void anotarResultadoHttp(int codigo) {
    --------------------------------------------------------------------- */
 
 bool consultarAutorizacao() {
-  String url = String(BACKEND_URL) + "/dispositivo/autorizacao.php?mac=" + WiFi.macAddress();
+  // Telemetria de presenca junto com a consulta: MAC, versao e a porta em
+  // que este equipamento serve a pagina de monitoramento. A porta e o unico
+  // dado que o site nao conseguiria obter de outro jeito - o IP ele aprende
+  // da origem desta propria requisicao, mas a porta de origem e efemera.
+  String url = String(BACKEND_URL) + "/dispositivo/autorizacao.php?mac=" + WiFi.macAddress()
+             + "&firmware=" + FIRMWARE
+             + "&porta=" + String(DISPOSITIVO_PORTA_HTTP);
 
   String resposta;
   const int codigo = requisicao(url, false, "", resposta);

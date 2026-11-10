@@ -126,7 +126,7 @@ Servo servoPorta;
    3) ESTADO GLOBAL - e isto que as rotas HTTP publicam
    ===================================================================== */
 
-WebServer server(80);            // servidor HTTP escutando na porta 80
+WebServer server(DISPOSITIVO_PORTA_HTTP);  // ver nuvem.h: o backend tambem precisa saber
 
 const char *FIRMWARE = "0.2.0";
 

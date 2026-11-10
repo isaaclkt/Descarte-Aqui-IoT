@@ -125,6 +125,10 @@ mysql -u root < "../Descarte Aqui - Web/banco/01_descarteaqui_entrega_final.sql"
 mysql -u root descarteaqui < backend/sql/01_integracao_iot.sql
 ```
 
+```bash
+mysql -u root descarteaqui < backend/sql/02_porta_dispositivo.sql
+```
+
 3. rodar o `INSERT` do dispositivo que o passo 3 imprimiu;
 4. ligar **Apache** e **MySQL** no painel do XAMPP.
 
