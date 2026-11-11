@@ -655,11 +655,4 @@ Dois detalhes que costumam morder:
   arquivos gerados não são versionados (`docs/qrcodes/` está no `.gitignore`):
   eles dependem da rede do dia. Regere com um comando.
 
-## 10. Próximas etapas
 
-- [x] Preencher integrantes da equipe (nome + RA) neste README
-- [ ] Adicionar diagrama de blocos e esquemático em `docs/`
-- [ ] Calibrar a balança e fixar o `FATOR_CALIBRACAO` real
-- [ ] Adicionar fotos e vídeo da demonstração
-- [ ] Testes de estresse (várias requisições simultâneas)
-- [ ] Relatório técnico (modelo será divulgado pelo professor)
